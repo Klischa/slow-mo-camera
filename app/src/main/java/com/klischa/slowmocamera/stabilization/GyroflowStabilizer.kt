@@ -28,7 +28,7 @@ class GyroflowStabilizer(private val context: Context) {
         videoUri: Uri,
         telemetryFile: File?,
         params: StabilizationParams,
-        onProgress: (Int) -> Unit
+        onProgress: suspend (Int) -> Unit
     ): Uri? = withContext(Dispatchers.IO) {
         val frameExtractor = FrameExtractor(context)
         val videoInfo = frameExtractor.getVideoInfo(videoUri)

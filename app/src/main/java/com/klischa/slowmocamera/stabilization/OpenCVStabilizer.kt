@@ -29,7 +29,7 @@ class OpenCVStabilizer(private val context: Context) {
     suspend fun stabilizeVideo(
         inputUri: Uri,
         params: StabilizationParams,
-        onProgress: (Int) -> Unit
+        onProgress: suspend (Int) -> Unit
     ): Uri? = withContext(Dispatchers.IO) {
         val frameExtractor = FrameExtractor(context)
         val videoInfo = frameExtractor.getVideoInfo(inputUri)

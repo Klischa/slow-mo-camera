@@ -36,7 +36,7 @@ class StabilizationManager(private val context: Context) {
         videoUri: Uri,
         telemetryFile: File? = null,
         params: StabilizationParams,
-        onProgress: (Int) -> Unit
+        onProgress: suspend (Int) -> Unit
     ): Uri? {
         return when (params.mode) {
             StabilizationMode.AUTO, StabilizationMode.FFMPEG_VIDSTAB -> {

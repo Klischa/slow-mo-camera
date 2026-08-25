@@ -21,7 +21,7 @@ class FFmpegStabilizer(private val context: Context) {
     suspend fun stabilizeVideo(
         inputUri: Uri,
         params: StabilizationParams,
-        onProgress: (Int) -> Unit
+        onProgress: suspend (Int) -> Unit
     ): Uri? = withContext(Dispatchers.IO) {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outputName = "SlowMo_Stabilized_VidStab_${timestamp}.mp4"
