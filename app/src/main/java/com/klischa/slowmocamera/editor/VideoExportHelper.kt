@@ -11,8 +11,7 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
-import androidx.media3.common.audio.SpeedChangingAudioProcessor
-import androidx.media3.effect.ScaleAndRotateTransformation
+import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.DefaultMuxer
@@ -86,9 +85,10 @@ class VideoExportHelper(private val context: Context) {
 
             // Изменение скорости звука при Slow-Mo
             if (options.speedFactor != 1.0f && !options.isMuteOriginalAudio) {
-                val speedAudioProcessor = SpeedChangingAudioProcessor()
-                speedAudioProcessor.setSpeed(options.speedFactor)
-                audioProcessors.add(speedAudioProcessor)
+                val sonicAudioProcessor = SonicAudioProcessor().apply {
+                    setSpeed(options.speedFactor)
+                }
+                audioProcessors.add(sonicAudioProcessor)
             }
 
             val effects = Effects(audioProcessors, videoEffects)
