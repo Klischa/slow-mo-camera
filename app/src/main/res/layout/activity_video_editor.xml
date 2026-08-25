@@ -59,11 +59,30 @@
         app:show_buffering="when_playing"
         app:use_controller="true" />
 
+    <!-- AI Subtitle Live Overlay Text -->
+    <TextView
+        android:id="@+id/tvSubtitleOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp"
+        android:background="#99000000"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:textColor="@color/accent_yellow"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/editorPlayerView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:text="[00:01] ⚡ Замедленный момент в Slow-Mo"
+        tools:visibility="visible" />
+
     <!-- Bottom Controls ScrollView -->
     <ScrollView
         android:id="@+id/scrollControls"
         android:layout_width="match_parent"
-        android:layout_height="280dp"
+        android:layout_height="320dp"
         android:background="@drawable/bg_control_panel"
         app:layout_constraintBottom_toBottomOf="parent">
 
@@ -73,10 +92,60 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- AI Tools Bar -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🤖 Интеллектуальные ИИ-функции"
+                android:textColor="@color/primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnAiOpticalFlow"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:text="🧠 AI Сглаживание (Optical Flow)"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnAiHighlights"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:text="✨ Авто-хайлайты"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnAiSubtitles"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="💬 Авто-субтитры"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
             <!-- Timeline Trimmer -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -239,7 +308,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- Export Progress Overlay -->
+    <!-- Export / AI Progress Overlay -->
     <androidx.cardview.widget.CardView
         android:id="@+id/cardExportProgress"
         android:layout_width="280dp"
@@ -275,7 +344,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:text="Экспорт видео: 0%"
+                android:text="Обработка: 0%"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp"
                 android:textStyle="bold" />

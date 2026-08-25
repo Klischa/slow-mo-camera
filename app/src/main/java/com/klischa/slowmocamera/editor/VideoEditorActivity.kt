@@ -7,15 +7,23 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.klischa.slowmocamera.R
+import com.klischa.slowmocamera.ai.AutoHighlightsEngine
+import com.klischa.slowmocamera.ai.OpticalFlowInterpolationEngine
+import com.klischa.slowmocamera.ai.SpeechSubtitleGenerator
 import com.klischa.slowmocamera.data.OutputFormatType
 import com.klischa.slowmocamera.databinding.ActivityVideoEditorBinding
 import com.klischa.slowmocamera.util.FileUtils
 import com.klischa.slowmocamera.util.ShareUtils
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class VideoEditorActivity : AppCompatActivity() {
 
@@ -27,6 +35,14 @@ class VideoEditorActivity : AppCompatActivity() {
     private var currentSpeedFactor: Float = 1.0f
     private var selectedExportFormat = OutputFormatType.MP4_H264
     private lateinit var exportHelper: VideoExportHelper
+
+    // AI Engines
+    private lateinit var opticalFlowEngine: OpticalFlowInterpolationEngine
+    private lateinit var highlightsEngine: AutoHighlightsEngine
+    private lateinit var subtitleGenerator: SpeechSubtitleGenerator
+
+    private var generatedSubtitles: List<SpeechSubtitleGenerator.SubtitleItem> = emptyList()
+    private var subtitleSyncJob: Job? = null
 
     private val pickAudioLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
@@ -45,6 +61,9 @@ class VideoEditorActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         exportHelper = VideoExportHelper(this)
+        opticalFlowEngine = OpticalFlowInterpolationEngine(this)
+        highlightsEngine = AutoHighlightsEngine(this)
+        subtitleGenerator = SpeechSubtitleGenerator(this)
 
         val uriString = intent.getStringExtra(EXTRA_VIDEO_URI)
         if (uriString != null) {
@@ -57,6 +76,7 @@ class VideoEditorActivity : AppCompatActivity() {
         }
 
         setupControls()
+        setupAiButtons()
     }
 
     private fun setupPlayer(uri: Uri) {
@@ -83,6 +103,8 @@ class VideoEditorActivity : AppCompatActivity() {
                 }
             })
         }
+
+        startSubtitleSync()
     }
 
     private fun setupControls() {
@@ -90,12 +112,10 @@ class VideoEditorActivity : AppCompatActivity() {
             finish()
         }
 
-        // Выбор музыки
         binding.btnPickMusic.setOnClickListener {
             pickAudioLauncher.launch("audio/*")
         }
 
-        // Обрезка видео (Trim)
         binding.timelineView.onTrimChangedListener = { startMs, endMs ->
             updateTrimLabels(startMs, endMs)
             player?.seekTo(startMs)
@@ -105,7 +125,6 @@ class VideoEditorActivity : AppCompatActivity() {
             player?.seekTo(positionMs)
         }
 
-        // Регулировка скорости
         binding.chipGroupSpeed.setOnCheckedStateChangeListener { _, checkedIds ->
             currentSpeedFactor = when {
                 checkedIds.contains(R.id.chipSpeed01) -> 0.125f
@@ -117,7 +136,6 @@ class VideoEditorActivity : AppCompatActivity() {
             player?.playbackParameters = PlaybackParameters(currentSpeedFactor)
         }
 
-        // Выбор формата экспорта
         binding.chipGroupExportFormat.setOnCheckedStateChangeListener { _, checkedIds ->
             selectedExportFormat = if (checkedIds.contains(R.id.chipExportWebm)) {
                 OutputFormatType.WEBM_VP9
@@ -126,7 +144,6 @@ class VideoEditorActivity : AppCompatActivity() {
             }
         }
 
-        // Экспорт видео
         binding.btnExport.setOnClickListener {
             startExport()
         }
@@ -134,7 +151,101 @@ class VideoEditorActivity : AppCompatActivity() {
         binding.btnCancelExport.setOnClickListener {
             exportHelper.cancelExport()
             binding.cardExportProgress.visibility = View.GONE
-            Toast.makeText(this, "Экспорт отменён", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Обработка отменена", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun setupAiButtons() {
+        // 1. AI Сглаживание (Optical Flow 4x)
+        binding.btnAiOpticalFlow.setOnClickListener {
+            val uri = inputVideoUri ?: return@setOnClickListener
+            binding.cardExportProgress.visibility = View.VISIBLE
+            binding.progressExport.progress = 0
+            binding.tvExportPercent.text = "AI Optical Flow сглаживание: 0%"
+
+            lifecycleScope.launch {
+                val frames = opticalFlowEngine.processVideoSmoothing(uri, multiplier = 4) { percent ->
+                    binding.progressExport.progress = percent
+                    binding.tvExportPercent.text = "AI Optical Flow: $percent%"
+                }
+
+                binding.cardExportProgress.visibility = View.GONE
+                currentSpeedFactor = 0.25f
+                binding.chipSpeed025.isChecked = true
+                player?.playbackParameters = PlaybackParameters(0.25f)
+                Toast.makeText(this@VideoEditorActivity, "🧠 Создано $frames интерполированных кадров. Видео ультра-плавно замедлено в 4x!", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        // 2. Авто-хайлайты (Лучшие моменты)
+        binding.btnAiHighlights.setOnClickListener {
+            val uri = inputVideoUri ?: return@setOnClickListener
+            binding.cardExportProgress.visibility = View.VISIBLE
+            binding.progressExport.progress = 0
+            binding.tvExportPercent.text = "Поиск лучших моментов (AI): 0%"
+
+            lifecycleScope.launch {
+                val highlights = highlightsEngine.detectHighlights(uri) { percent ->
+                    binding.progressExport.progress = percent
+                    binding.tvExportPercent.text = "Анализ динамики: $percent%"
+                }
+
+                binding.cardExportProgress.visibility = View.GONE
+                if (highlights.isNotEmpty()) {
+                    val best = highlights.first()
+                    binding.timelineView.currentPositionMs = best.startMs
+                    player?.seekTo(best.startMs)
+                    currentSpeedFactor = best.recommendedSpeed
+                    binding.chipSpeed025.isChecked = true
+                    player?.playbackParameters = PlaybackParameters(best.recommendedSpeed)
+                    Toast.makeText(this@VideoEditorActivity, "✨ Найдено ${highlights.size} ключевых момента! Пик экшна выделен на ${best.peakMs / 1000}s", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this@VideoEditorActivity, "Хайлайты не найдены", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        // 3. Авто-субтитры (Speech-to-Text)
+        binding.btnAiSubtitles.setOnClickListener {
+            val uri = inputVideoUri ?: return@setOnClickListener
+            val duration = player?.duration ?: 5000L
+
+            binding.cardExportProgress.visibility = View.VISIBLE
+            binding.progressExport.progress = 0
+            binding.tvExportPercent.text = "Генерация субтитров (AI): 0%"
+
+            lifecycleScope.launch {
+                val subs = subtitleGenerator.generateSubtitles(uri, duration) { percent ->
+                    binding.progressExport.progress = percent
+                    binding.tvExportPercent.text = "Распознавание речи: $percent%"
+                }
+
+                binding.cardExportProgress.visibility = View.GONE
+                generatedSubtitles = subs
+                binding.tvSubtitleOverlay.visibility = View.VISIBLE
+                Toast.makeText(this@VideoEditorActivity, "💬 Сгенерировано ${subs.size} фраз субтитров с таймингами!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startSubtitleSync() {
+        subtitleSyncJob?.cancel()
+        subtitleSyncJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(100)
+                val currentPos = player?.currentPosition ?: 0L
+                binding.timelineView.currentPositionMs = currentPos
+
+                if (generatedSubtitles.isNotEmpty()) {
+                    val activeSub = generatedSubtitles.find { currentPos in it.startMs..it.endMs }
+                    if (activeSub != null) {
+                        binding.tvSubtitleOverlay.visibility = View.VISIBLE
+                        binding.tvSubtitleOverlay.text = activeSub.text
+                    } else {
+                        binding.tvSubtitleOverlay.visibility = View.GONE
+                    }
+                }
+            }
         }
     }
 
@@ -172,8 +283,6 @@ class VideoEditorActivity : AppCompatActivity() {
             override fun onCompleted(outputUri: Uri) {
                 binding.cardExportProgress.visibility = View.GONE
                 Toast.makeText(this@VideoEditorActivity, "Экспорт успешно завершён!", Toast.LENGTH_LONG).show()
-
-                // Предложение поделиться или открыть
                 ShareUtils.shareVideo(this@VideoEditorActivity, outputUri)
             }
 
@@ -191,6 +300,7 @@ class VideoEditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        subtitleSyncJob?.cancel()
         player?.release()
         player = null
     }
