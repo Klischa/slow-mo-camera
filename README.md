@@ -1,8 +1,28 @@
 # 🎥 Slow-Mo Camera & AI Video Studio (Android 14 / Camera2 API)
 
-Нативное Android-приложение для профессиональной высокоскоростной съёмки Slow-Motion (120/240 FPS), полноразмерной фотосъёмки, таймлапса, интеллектуального анализа движения и продвинутого видеоредактора с **ИИ-функциями (RIFE v4.6, NCNN Vulkan GPU, Optical Flow, Auto Highlights, Speech-to-Text Subtitles)**.
+Нативное Android-приложение для профессиональной высокоскоростной съёмки Slow-Motion (120/240 FPS), полноразмерной фотосъёмки, таймлапса, интеллектуального анализа движения, **комплексной стабилизации видео (OIS/EIS, OpenCV, FFmpeg vid.stab, Gyroflow)** и продвинутого видеоредактора с **ИИ-функциями (RIFE v4.6, NCNN Vulkan GPU, Optical Flow, Auto Highlights, Speech-to-Text Subtitles)**.
 
 Специально оптимизировано для чипсетов **MediaTek Helio G99** и GPU **Mali-G57 MP2** (включая **Infinix Note 30**, камера 64MP) с поддержкой Root-разблокировки и автоматической ориентации.
+
+---
+
+## 🎥 Комплексная стабилизация видео (4 Режима)
+
+1. **Аппаратная стабилизация в реальном времени (OIS / EIS):**
+   * Включение оптической (OIS) и электронной (EIS) стабилизации сенсора Camera2 во время превью и съёмки (`CameraStabilizer.kt`).
+   * Поддержка `CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION` (Android 13+).
+
+2. **Постобработка через OpenCV (Optical Feature Tracking):**
+   * Детектирование ключевых точек, расчёт межпокадровых аффинных трансформаций и сглаживание траектории движения камеры (`OpenCVStabilizer.kt`).
+   * Устранение тряски и мелкого дрожания рук с настраиваемым коэффициентом кропа.
+
+3. **Двухпроходная стабилизация FFmpeg + vid.stab:**
+   * Проход 1 (`vidstabdetect`): глубокий анализ тряски с настраиваемой точностью (`accuracy`, `shakiness`).
+   * Проход 2 (`vidstabtransform`): сглаживание траектории (`smoothing`) и умная адаптация границ.
+
+4. **Гироскопическая стабилизация (Gyroflow / IMU):**
+   * Синхронная запись высокочастотных данных гироскопа и акселерометра (`SensorRecorder.kt`, `SENSOR_DELAY_FASTEST`) во время съёмки.
+   * Компенсация физического вращения камеры по осям $X, Y, Z$ (`GyroflowStabilizer.kt`).
 
 ---
 
@@ -17,9 +37,6 @@
    * 🌟 **«Качество» (Quality):** Нейросетевая интерполяция RIFE v4.6 (до 720p на Mali-G57).
    * ⚡ **«Скорость» (Speed):** Ускоренная интерполяция Fast Motion-Compensated Flow для длинных видео.
    * 🤖 **«Авто» (Adaptive):** Автоматический подбор движка и частоты кадров на основе мониторинга температуры чипсета (`ThermalMonitor.kt`).
-
-3. **Фоновая обработка (WorkManager):**
-   * Задача `InterpolationWorker` выполняется в фоне с отображением прогресса в процентах, обработанных кадров и расчетом оставшегося времени.
 
 ---
 
@@ -77,7 +94,7 @@ curl -sL https://raw.githubusercontent.com/Klischa/slow-mo-camera/main/unlock_mt
 
 Сборка запускается автоматически при создании тега:
 ```bash
-git tag -a v1.1.0 -m "Release v1.1.0 - Full AI Interpolation RIFE NCNN Vulkan, Highlights, Subtitles"
-git push origin v1.1.0
+git tag -a v1.2.0 -m "Release v1.2.0 - Video Stabilization (OIS/EIS, OpenCV, FFmpeg vid.stab, Gyroflow)"
+git push origin v1.2.0
 ```
 APK и Magisk-модуль прикрепляются к релизу в разделе **Releases**.

@@ -299,9 +299,21 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             },
             onOpenDiagnostics = {
                 showDiagnosticsDialog()
+            },
+            onOpenStabilization = {
+                showStabilizationBottomSheet()
             }
         )
         sheet.show(supportFragmentManager, CameraSettingsBottomSheet.TAG)
+    }
+
+    private fun showStabilizationBottomSheet() {
+        val stabSheet = com.klischa.slowmocamera.stabilization.StabilizationBottomSheet(
+            cameraHelper.stabilizationManager.currentParams
+        ) {
+            cameraHelper.refreshPreview()
+        }
+        stabSheet.show(supportFragmentManager, com.klischa.slowmocamera.stabilization.StabilizationBottomSheet.TAG)
     }
 
     private fun updateCurrentProfileBadge() {

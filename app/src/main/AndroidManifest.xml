@@ -10,6 +10,7 @@
     <!-- Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 10-12 (API 29-32) -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -76,6 +77,13 @@
 
         <activity
             android:name=".ai.interpolation.AiInterpolationActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
+            android:theme="@style/Theme.SlowMoCamera.NoActionBar" />
+
+        <activity
+            android:name=".stabilization.VideoStabilizerActivity"
             android:exported="false"
             android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"

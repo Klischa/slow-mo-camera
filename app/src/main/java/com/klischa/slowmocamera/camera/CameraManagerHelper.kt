@@ -33,6 +33,9 @@ import com.klischa.slowmocamera.data.CaptureMode
 import com.klischa.slowmocamera.data.HighSpeedProfile
 import com.klischa.slowmocamera.data.VideoConfig
 import com.klischa.slowmocamera.recorder.MediaRecorderHelper
+import com.klischa.slowmocamera.stabilization.CameraStabilizer
+import com.klischa.slowmocamera.stabilization.StabilizationManager
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,7 +64,10 @@ class CameraManagerHelper(
     private val mediaRecorderHelper = MediaRecorderHelper(context)
 
     val manualControls = CameraManualControls()
+    val stabilizationManager = StabilizationManager(context)
     lateinit var motionDetector: MotionDetector
+    private var stabCapabilities = CameraStabilizer.StabilizationCapability(false, false, false)
+    private var currentGyroFile: java.io.File? = null
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -158,6 +164,9 @@ class CameraManagerHelper(
             chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?.let {
                 manualControls.minFocusDistance = it
             }
+
+            // Стабилизация
+            stabCapabilities = stabilizationManager.inspectHardwareCapabilities(chars)
 
             setupZoomCapabilities(chars)
         } catch (e: Exception) {
@@ -571,6 +580,7 @@ class CameraManagerHelper(
             val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 addTarget(surface)
                 manualControls.applyToBuilder(this)
+                stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
             applyZoom(builder)
@@ -595,6 +605,7 @@ class CameraManagerHelper(
             val builder = device.createCaptureRequest(template).apply {
                 addTarget(surface)
                 manualControls.applyToBuilder(this)
+                stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
             applyZoom(builder)
@@ -681,11 +692,17 @@ class CameraManagerHelper(
             mediaRecorderHelper.start()
             isRecording = true
 
+            // Запись телеметрии гироскопа (Gyroflow)
+            val gyroFile = File(context.cacheDir, "temp_telemetry.gyro.csv")
+            currentGyroFile = gyroFile
+            stabilizationManager.sensorRecorder.startRecording()
+
             if (highSpeedSession != null) {
                 val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(preview)
                     addTarget(recorder)
                     manualControls.applyToBuilder(this)
+                    stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
                 applyZoom(builder)
@@ -698,6 +715,7 @@ class CameraManagerHelper(
                     addTarget(preview)
                     addTarget(recorder)
                     manualControls.applyToBuilder(this)
+                    stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
                 applyZoom(builder)
@@ -723,6 +741,10 @@ class CameraManagerHelper(
         try {
             val savedUri = mediaRecorderHelper.stop()
             isRecording = false
+
+            currentGyroFile?.let {
+                stabilizationManager.sensorRecorder.stopRecording(it)
+            }
 
             if (highSpeedSession != null) {
                 startHighSpeedPreview()

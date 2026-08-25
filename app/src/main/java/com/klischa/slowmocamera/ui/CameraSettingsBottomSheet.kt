@@ -18,7 +18,8 @@ class CameraSettingsBottomSheet(
     private var currentProfile: HighSpeedProfile?,
     private val availableProfiles: List<HighSpeedProfile>,
     private val onConfigChanged: (mode: RecordingMode, format: OutputFormatType, profile: HighSpeedProfile) -> Unit,
-    private val onOpenDiagnostics: () -> Unit
+    private val onOpenDiagnostics: () -> Unit,
+    private val onOpenStabilization: () -> Unit = {}
 ) : BottomSheetDialogFragment() {
 
     private var _binding: SheetCameraSettingsBinding? = null
@@ -42,6 +43,11 @@ class CameraSettingsBottomSheet(
 
         binding.btnCloseSettings.setOnClickListener {
             dismiss()
+        }
+
+        binding.btnOpenStabilizationSettings.setOnClickListener {
+            dismiss()
+            onOpenStabilization()
         }
 
         binding.btnOpenDiagnostics.setOnClickListener {

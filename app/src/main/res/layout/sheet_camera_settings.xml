@@ -134,13 +134,23 @@
             android:textColor="@color/text_primary" />
     </com.google.android.material.chip.ChipGroup>
 
-    <!-- Section 4: Diagnostics button -->
+    <!-- Section 4: Stabilization Settings button -->
+    <Button
+        android:id="@+id/btnOpenStabilizationSettings"
+        style="@style/Widget.Material3.Button.TonalButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="🎥 Стабилизация (OIS / EIS / Gyroflow)"
+        android:textColor="@color/primary" />
+
+    <!-- Section 5: Diagnostics button -->
     <Button
         android:id="@+id/btnOpenDiagnostics"
         style="@style/Widget.Material3.Button.OutlinedButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
+        android:layout_marginTop="10dp"
         android:drawableStart="@drawable/ic_info"
         android:text="Просмотреть отчёт HAL Диагностики"
         android:textColor="@color/text_primary" />

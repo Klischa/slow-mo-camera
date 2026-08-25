@@ -19,6 +19,7 @@ import com.klischa.slowmocamera.ai.SpeechSubtitleGenerator
 import com.klischa.slowmocamera.ai.interpolation.AiInterpolationActivity
 import com.klischa.slowmocamera.data.OutputFormatType
 import com.klischa.slowmocamera.databinding.ActivityVideoEditorBinding
+import com.klischa.slowmocamera.stabilization.VideoStabilizerActivity
 import com.klischa.slowmocamera.util.FileUtils
 import com.klischa.slowmocamera.util.ShareUtils
 import kotlinx.coroutines.Job
@@ -214,6 +215,15 @@ class VideoEditorActivity : AppCompatActivity() {
                 binding.tvSubtitleOverlay.visibility = View.VISIBLE
                 Toast.makeText(this@VideoEditorActivity, "💬 Сгенерировано ${subs.size} фраз субтитров с таймингами!", Toast.LENGTH_LONG).show()
             }
+        }
+
+        // 4. Стабилизация видео (vid.stab / OpenCV / Gyroflow)
+        binding.btnStabilizeVideo.setOnClickListener {
+            val uri = inputVideoUri ?: return@setOnClickListener
+            val intent = Intent(this, VideoStabilizerActivity::class.java).apply {
+                putExtra(VideoStabilizerActivity.EXTRA_VIDEO_URI, uri.toString())
+            }
+            startActivity(intent)
         }
     }
 
