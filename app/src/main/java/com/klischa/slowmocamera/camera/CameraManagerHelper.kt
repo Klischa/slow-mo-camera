@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
@@ -38,7 +39,8 @@ import java.util.Locale
 import java.util.concurrent.Executor
 
 /**
- * Управляет Camera2: High-Speed видеосессиями, фотосъёмкой, фронтальной камерой и ориентацией.
+ * Управляет Camera2: High-Speed Slow-Mo, ручными PRO-настройками (ISO, Shutter, WB, Focus),
+ * снимками во время записи (Snapshot), таймлапсом, детекцией движения и ориентацией.
  */
 class CameraManagerHelper(
     private val context: Context,
@@ -51,11 +53,15 @@ class CameraManagerHelper(
         fun onProfilesAvailable(profiles: List<HighSpeedProfile>, isHighSpeedSupported: Boolean)
         fun onSessionConfigured(previewSize: Size)
         fun onPhotoCaptured(uri: Uri)
+        fun onMotionTriggered()
     }
 
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val halChecker = HalCapabilityChecker(context)
     private val mediaRecorderHelper = MediaRecorderHelper(context)
+
+    val manualControls = CameraManualControls()
+    lateinit var motionDetector: MotionDetector
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -68,6 +74,7 @@ class CameraManagerHelper(
     private var previewSurface: Surface? = null
     private var recorderSurface: Surface? = null
     private var imageReader: ImageReader? = null
+    private var motionAnalysisReader: ImageReader? = null
 
     var currentCameraId: String = "0"
         private set
@@ -91,7 +98,8 @@ class CameraManagerHelper(
         private set
 
     private var supportedProfiles: List<HighSpeedProfile> = emptyList()
-    private var isRecording = false
+    var isRecording = false
+        private set
 
     // Zoom parameters
     var currentZoomRatio: Float = 1.0f
@@ -103,6 +111,9 @@ class CameraManagerHelper(
     private var sensorActiveArray: Rect? = null
 
     init {
+        motionDetector = MotionDetector(isEnabled = false) {
+            listener.onMotionTriggered()
+        }
         findDefaultCamera()
     }
 
@@ -132,6 +143,22 @@ class CameraManagerHelper(
             val facing = chars.get(CameraCharacteristics.LENS_FACING)
             isFrontCamera = facing == CameraCharacteristics.LENS_FACING_FRONT
             sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+            sensorActiveArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+
+            // Диапазоны ISO, выдержки и фокуса
+            chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.let {
+                manualControls.isoRange = it
+            }
+            chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.let {
+                manualControls.exposureTimeRange = it
+            }
+            chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)?.let {
+                manualControls.exposureCompensationRange = it
+            }
+            chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?.let {
+                manualControls.minFocusDistance = it
+            }
+
             setupZoomCapabilities(chars)
         } catch (e: Exception) {
             Log.e(tag, "Ошибка чтения метаданных камеры: ${e.message}")
@@ -224,9 +251,7 @@ class CameraManagerHelper(
     }
 
     private fun setupZoomCapabilities(chars: CameraCharacteristics) {
-        sensorActiveArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
         var maxZoom = 6.0f
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val zoomRange = chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             if (zoomRange != null) {
@@ -249,6 +274,11 @@ class CameraManagerHelper(
         if (Math.abs(clamped - currentZoomRatio) < 0.01f) return currentZoomRatio
 
         currentZoomRatio = clamped
+        refreshPreview()
+        return currentZoomRatio
+    }
+
+    fun refreshPreview() {
         if (cameraDevice != null && !isRecording) {
             if (highSpeedSession != null) {
                 startHighSpeedPreview()
@@ -256,7 +286,6 @@ class CameraManagerHelper(
                 startStandardPreview()
             }
         }
-        return currentZoomRatio
     }
 
     private fun applyZoom(builder: CaptureRequest.Builder) {
@@ -274,6 +303,23 @@ class CameraManagerHelper(
         val cropTop = (active.height() - cropHeight) / 2
         val cropRect = Rect(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
         builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+    }
+
+    /**
+     * Тап по экрану для точечной фокусировки и экспозамера (Tap-to-Focus).
+     */
+    fun tapToFocus(x: Float, y: Float, viewWidth: Int, viewHeight: Int) {
+        val meteringRect = CameraManualControls.calculateFocusArea(
+            PointF(x, y),
+            Size(viewWidth, viewHeight),
+            sensorActiveArray,
+            sensorOrientation,
+            isFrontCamera
+        )
+        manualControls.focusMeteringArea = meteringRect
+        manualControls.exposureMeteringArea = meteringRect
+        manualControls.isAutoFocus = true
+        refreshPreview()
     }
 
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
@@ -328,6 +374,8 @@ class CameraManagerHelper(
             standardSession = null
             imageReader?.close()
             imageReader = null
+            motionAnalysisReader?.close()
+            motionAnalysisReader = null
 
             val profileSize = config.profile.size
             currentPreviewSize = profileSize
@@ -339,11 +387,13 @@ class CameraManagerHelper(
 
             listener.onSessionConfigured(profileSize)
 
+            // Настройка ImageReader для фото/снапшотов
+            setupImageReader(handler)
+
             if (currentMode == CaptureMode.PHOTO) {
-                // Фоторежим: настраиваем ImageReader для сохранения полноразмерных снимков
-                setupPhotoSession(device, newPreviewSurface, handler)
+                val surfaces = listOfNotNull(newPreviewSurface, imageReader?.surface)
+                createStandardSession(device, surfaces, handler)
             } else {
-                // Видеорежим (Slow-Mo / HFR / HSR)
                 setupVideoSession(device, newPreviewSurface, config, handler)
             }
         } catch (e: Exception) {
@@ -352,7 +402,7 @@ class CameraManagerHelper(
         }
     }
 
-    private fun setupPhotoSession(device: CameraDevice, preview: Surface, handler: Handler) {
+    private fun setupImageReader(handler: Handler) {
         val chars = cameraManager.getCameraCharacteristics(currentCameraId)
         val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG) ?: arrayOf(Size(1920, 1080))
@@ -369,9 +419,6 @@ class CameraManagerHelper(
             saveCapturedPhoto(bytes)
         }, handler)
         imageReader = reader
-
-        val surfaces = listOf(preview, reader.surface)
-        createStandardSession(device, surfaces, handler)
     }
 
     private fun saveCapturedPhoto(bytes: ByteArray) {
@@ -408,9 +455,10 @@ class CameraManagerHelper(
     private fun setupVideoSession(device: CameraDevice, preview: Surface, config: VideoConfig, handler: Handler) {
         val newRecorderSurface = mediaRecorderHelper.setupRecorder(config)
         recorderSurface = newRecorderSurface
-        val surfaces = listOf(preview, newRecorderSurface)
 
-        // На фронтальной камере всегда используем стандартную сессию для гарантированной стабильности
+        val surfaces = mutableListOf(preview, newRecorderSurface)
+        imageReader?.surface?.let { surfaces.add(it) }
+
         if (!isFrontCamera && isConstrainedHighSpeedSupported && config.profile.isConstrainedSupported) {
             createConstrainedSession(device, surfaces, handler)
         } else {
@@ -482,13 +530,12 @@ class CameraManagerHelper(
 
         override fun onConfigureFailed(session: CameraCaptureSession) {
             Log.e(tag, "onConfigureFailed в HighSpeedCaptureSession, переключаемся на стандартную сессию")
-            // Автоматический фолбэк на стандартную сессию
             val device = cameraDevice
             val preview = previewSurface
             val recorder = recorderSurface
             val handler = backgroundHandler
             if (device != null && preview != null && recorder != null && handler != null) {
-                createStandardSession(device, listOf(preview, recorder), handler)
+                createStandardSession(device, listOfNotNull(preview, recorder, imageReader?.surface), handler)
             } else {
                 handleSessionCreationFailure(
                     IllegalStateException("HAL вендора отклонил сессию высокой скорости")
@@ -523,9 +570,7 @@ class CameraManagerHelper(
         try {
             val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 addTarget(surface)
-                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                manualControls.applyToBuilder(this)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
             applyZoom(builder)
@@ -549,9 +594,7 @@ class CameraManagerHelper(
             val template = if (currentMode == CaptureMode.PHOTO) CameraDevice.TEMPLATE_PREVIEW else CameraDevice.TEMPLATE_RECORD
             val builder = device.createCaptureRequest(template).apply {
                 addTarget(surface)
-                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                manualControls.applyToBuilder(this)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
             applyZoom(builder)
@@ -563,7 +606,37 @@ class CameraManagerHelper(
     }
 
     /**
-     * Спуск затвора для создания фотоснимка.
+     * Снимок фото во время видеозаписи (Snapshot).
+     */
+    fun takeSnapshotDuringRecording(deviceRotationDegrees: Int) {
+        val session = standardSession ?: highSpeedSession ?: return
+        val device = cameraDevice ?: return
+        val reader = imageReader ?: return
+        val handler = backgroundHandler ?: return
+
+        try {
+            val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_VIDEO_SNAPSHOT).apply {
+                addTarget(reader.surface)
+                manualControls.applyToBuilder(this)
+
+                val jpegOrientation = if (isFrontCamera) {
+                    (sensorOrientation + deviceRotationDegrees) % 360
+                } else {
+                    (sensorOrientation - deviceRotationDegrees + 360) % 360
+                }
+                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
+            }
+            applyZoom(builder)
+
+            session.capture(builder.build(), null, handler)
+            Log.i(tag, "Снапшот во время записи отправлен на захват")
+        } catch (e: Exception) {
+            Log.w(tag, "Не удалось сделать снимок во время видео: ${e.message}")
+        }
+    }
+
+    /**
+     * Спуск затвора для создания фотоснимка в фоторежиме.
      */
     fun takePhoto(deviceRotationDegrees: Int) {
         val session = standardSession ?: return
@@ -574,11 +647,8 @@ class CameraManagerHelper(
         try {
             val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
-                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                manualControls.applyToBuilder(this)
 
-                // Вычисление правильной ориентации JPEG
                 val jpegOrientation = if (isFrontCamera) {
                     (sensorOrientation + deviceRotationDegrees) % 360
                 } else {
@@ -615,9 +685,7 @@ class CameraManagerHelper(
                 val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(preview)
                     addTarget(recorder)
-                    set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                    set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                    manualControls.applyToBuilder(this)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
                 applyZoom(builder)
@@ -629,8 +697,7 @@ class CameraManagerHelper(
                 val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(preview)
                     addTarget(recorder)
-                    set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    manualControls.applyToBuilder(this)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
                 applyZoom(builder)

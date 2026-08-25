@@ -46,15 +46,35 @@
             android:textSize="14sp"
             android:textStyle="bold" />
 
+        <!-- Edit Video Button -->
+        <Button
+            android:id="@+id/btnEditVideo"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:text="✂️ Редактор"
+            android:textColor="@color/primary" />
+
         <!-- Open from phone gallery button -->
         <Button
             android:id="@+id/btnPickGallery"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:text="📂 Из галереи"
-            android:textColor="@color/primary" />
+            android:layout_marginEnd="6dp"
+            android:text="📂 Галерея"
+            android:textColor="@color/text_primary" />
+
+        <!-- Share Button -->
+        <Button
+            android:id="@+id/btnShareVideo"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:text="📤"
+            android:textColor="@color/text_primary" />
 
         <!-- Speed control button -->
         <Button

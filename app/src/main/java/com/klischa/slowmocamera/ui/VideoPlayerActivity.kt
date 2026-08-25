@@ -1,5 +1,6 @@
 package com.klischa.slowmocamera.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -10,17 +11,19 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import com.klischa.slowmocamera.databinding.ActivityVideoPlayerBinding
+import com.klischa.slowmocamera.editor.VideoEditorActivity
 import com.klischa.slowmocamera.util.FileUtils
+import com.klischa.slowmocamera.util.ShareUtils
 
 class VideoPlayerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityVideoPlayerBinding
     private var player: ExoPlayer? = null
+    private var currentVideoUri: Uri? = null
 
     private val speedOptions = listOf(0.125f, 0.25f, 0.5f, 1.0f, 2.0f)
     private var currentSpeedIndex = 3 // 1.0f
 
-    // Лаунчер для выбора видео из системной галереи телефона (Photo Picker / Storage)
     private val pickVideoLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -29,7 +32,6 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    // Фолбэк лаунчер (GetContent) для старых версий или устройств без Photo Picker
     private val getContentLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -49,7 +51,6 @@ class VideoPlayerActivity : AppCompatActivity() {
         if (videoUriString != null) {
             playVideoUri(Uri.parse(videoUriString))
         } else {
-            // Если открыто напрямую без переданного видео — открываем выбор из галереи
             openGalleryPicker()
         }
     }
@@ -73,6 +74,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun playVideoUri(uri: Uri) {
+        currentVideoUri = uri
         val fileName = FileUtils.getFileNameFromUri(this, uri)
         binding.tvVideoTitle.text = fileName
 
@@ -99,6 +101,21 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         binding.btnPickGallery.setOnClickListener {
             openGalleryPicker()
+        }
+
+        binding.btnEditVideo.setOnClickListener {
+            currentVideoUri?.let { uri ->
+                val intent = Intent(this, VideoEditorActivity::class.java).apply {
+                    putExtra(VideoEditorActivity.EXTRA_VIDEO_URI, uri.toString())
+                }
+                startActivity(intent)
+            } ?: Toast.makeText(this, "Видео не выбрано для редактирования", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnShareVideo.setOnClickListener {
+            currentVideoUri?.let { uri ->
+                ShareUtils.shareVideo(this, uri)
+            }
         }
 
         binding.btnSpeed.setOnClickListener {

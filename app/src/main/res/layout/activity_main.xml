@@ -17,6 +17,12 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Focus Ring View for Tap-To-Focus -->
+    <com.klischa.slowmocamera.ui.FocusRingView
+        android:id="@+id/focusRingView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <!-- Shutter Flash View (Brief white overlay on photo capture) -->
     <View
         android:id="@+id/viewShutterFlash"
@@ -25,7 +31,7 @@
         android:background="#FFFFFF"
         android:visibility="gone" />
 
-    <!-- Top Bar with Gear Icon (Settings), Active Mode Indicator, and Camera Switcher -->
+    <!-- Top Bar with Settings, PRO Manual Controls, Profile Pill, and Switcher -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -33,40 +39,55 @@
         android:background="#80000000"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Settings Button (Gear in top-left) -->
+        <!-- Settings Button (Gear) -->
         <ImageButton
             android:id="@+id/btnSettings"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="Настройки съёмки"
             android:src="@drawable/ic_settings" />
+
+        <!-- PRO Manual Controls Button -->
+        <Button
+            android:id="@+id/btnProManual"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:paddingHorizontal="8dp"
+            android:text="PRO"
+            android:textColor="@color/accent_yellow"
+            android:textSize="11sp"
+            android:textStyle="bold" />
 
         <!-- Current Profile / Mode Pill -->
         <TextView
             android:id="@+id/tvCurrentProfileBadge"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="12dp"
+            android:layout_marginHorizontal="8dp"
             android:layout_weight="1"
             android:background="@drawable/bg_badge"
+            android:ellipsize="end"
             android:gravity="center"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp"
+            android:maxLines="1"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="6dp"
             android:text="HFR • 720p @ 240fps"
             android:textColor="@color/primary"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
 
         <!-- Camera Switcher -->
         <ImageButton
             android:id="@+id/btnSwitchCamera"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/action_switch_camera"
             android:src="@drawable/ic_camera_switch" />
@@ -77,7 +98,7 @@
         android:id="@+id/tvZoomBadge"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         android:background="@drawable/bg_badge"
         android:paddingHorizontal="16dp"
         android:paddingVertical="6dp"
@@ -96,7 +117,7 @@
         android:id="@+id/recordingHud"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="12dp"
         android:background="@drawable/bg_badge"
         android:gravity="center"
         android:orientation="horizontal"
@@ -144,61 +165,78 @@
         android:background="@drawable/bg_control_panel"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingHorizontal="24dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="24dp"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="20dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Mode Selector Switcher (ФОТО | SLOW-MO) -->
-        <com.google.android.material.tabs.TabLayout
-            android:id="@+id/tabCaptureMode"
+        <!-- Mode Selector Switcher (ФОТО | SLOW-MO | ТАЙМЛАПС | БУФЕР) -->
+        <HorizontalScrollView
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:background="@android:color/transparent"
-            app:tabIndicatorColor="@color/primary"
-            app:tabIndicatorHeight="3dp"
-            app:tabMode="fixed"
-            app:tabPaddingEnd="16dp"
-            app:tabPaddingStart="16dp"
-            app:tabRippleColor="@null"
-            app:tabSelectedTextColor="@color/primary"
-            app:tabTextColor="@color/text_secondary">
+            android:layout_height="wrap_content"
+            android:overScrollMode="never"
+            android:scrollbars="none">
 
-            <com.google.android.material.tabs.TabItem
+            <com.google.android.material.tabs.TabLayout
+                android:id="@+id/tabCaptureMode"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ФОТО" />
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                app:tabIndicatorColor="@color/primary"
+                app:tabIndicatorHeight="3dp"
+                app:tabMode="auto"
+                app:tabPaddingEnd="12dp"
+                app:tabPaddingStart="12dp"
+                app:tabRippleColor="@null"
+                app:tabSelectedTextColor="@color/primary"
+                app:tabTextColor="@color/text_secondary">
 
-            <com.google.android.material.tabs.TabItem
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="SLOW-MO" />
-        </com.google.android.material.tabs.TabLayout>
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ФОТО" />
 
-        <!-- Shutter Bar -->
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SLOW-MO" />
+
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ТАЙМЛАПС" />
+
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="БУФЕР" />
+            </com.google.android.material.tabs.TabLayout>
+        </HorizontalScrollView>
+
+        <!-- Shutter & Controls Row -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp">
+            android:layout_marginTop="8dp">
 
-            <!-- Gallery / Video Player Button (Left) -->
+            <!-- Gallery History Button (Left) -->
             <ImageButton
                 android:id="@+id/btnOpenGallery"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:background="@drawable/bg_badge"
-                android:contentDescription="Открыть плеер / Галерею"
-                android:padding="14dp"
+                android:contentDescription="История записей"
+                android:padding="12dp"
                 android:src="@drawable/ic_gallery"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
-            <!-- Big Shutter Button (Center) -->
+            <!-- Main Shutter Button (Center) -->
             <ImageButton
                 android:id="@+id/btnRecord"
-                android:layout_width="80dp"
-                android:layout_height="80dp"
+                android:layout_width="76dp"
+                android:layout_height="76dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Спуск затвора"
                 android:scaleType="centerInside"
@@ -208,14 +246,30 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
-            <!-- Status / Quick Play Last Media (Right) -->
+            <!-- Snapshot Photo Button during Video Recording -->
+            <ImageButton
+                android:id="@+id/btnSnapshotDuringRecord"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="16dp"
+                android:background="@drawable/bg_badge"
+                android:contentDescription="Снимок во время видео"
+                android:padding="10dp"
+                android:src="@drawable/ic_photo_camera"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="@id/btnRecord"
+                app:layout_constraintStart_toEndOf="@id/btnRecord"
+                app:layout_constraintTop_toTopOf="@id/btnRecord"
+                tools:visibility="visible" />
+
+            <!-- Quick Play Last Media (Right) -->
             <ImageButton
                 android:id="@+id/btnPlayLastVideo"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:background="@drawable/bg_badge"
                 android:contentDescription="Смотреть последнее медиа"
-                android:padding="14dp"
+                android:padding="12dp"
                 android:src="@drawable/ic_play"
                 android:visibility="invisible"
                 app:layout_constraintBottom_toBottomOf="parent"

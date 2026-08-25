@@ -28,6 +28,8 @@ import com.klischa.slowmocamera.data.OutputFormatType
 import com.klischa.slowmocamera.data.RecordingMode
 import com.klischa.slowmocamera.data.VideoConfig
 import com.klischa.slowmocamera.databinding.ActivityMainBinding
+import com.klischa.slowmocamera.editor.VideoEditorActivity
+import com.klischa.slowmocamera.gallery.VideoGalleryActivity
 import com.klischa.slowmocamera.util.FileUtils
 import com.klischa.slowmocamera.util.PermissionUtils
 import kotlinx.coroutines.Job
@@ -95,7 +97,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupGestures() {
-        // Жест щипка (Pinch-to-zoom): разводим пальцы -> приближаем, сводим -> отдаляем
+        // Жест щипка (Pinch-to-zoom)
         scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val scaleFactor = detector.scaleFactor
@@ -107,8 +109,14 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             }
         })
 
-        // Двойное нажатие для сброса зума на 1.0x
+        // Одиночный тап (Tap-to-focus) и двойной тап (Сброс зума на 1.0x)
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                cameraHelper.tapToFocus(e.x, e.y, binding.textureView.width, binding.textureView.height)
+                binding.focusRingView.showAt(e.x, e.y)
+                return true
+            }
+
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 val newZoom = cameraHelper.setZoomRatio(1.0f)
                 showZoomBadge(newZoom)
@@ -117,8 +125,8 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         })
 
         binding.textureView.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
             scaleGestureDetector.onTouchEvent(event)
+            gestureDetector.onTouchEvent(event)
             true
         }
     }
@@ -135,20 +143,28 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     }
 
     private fun setupModeTabs() {
-        // Выбор по умолчанию: SLOW-MO
         val slowMoTab = binding.tabCaptureMode.getTabAt(1)
         slowMoTab?.select()
 
         binding.tabCaptureMode.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab?) {
-                if (tab?.position == 0) {
-                    // ФОТО
-                    cameraHelper.setCaptureMode(CaptureMode.PHOTO)
-                    updateShutterButtonUi(CaptureMode.PHOTO)
-                } else {
-                    // SLOW-MO
-                    cameraHelper.setCaptureMode(CaptureMode.SLOW_MO_VIDEO)
-                    updateShutterButtonUi(CaptureMode.SLOW_MO_VIDEO)
+                when (tab?.position) {
+                    0 -> {
+                        cameraHelper.setCaptureMode(CaptureMode.PHOTO)
+                        updateShutterButtonUi(CaptureMode.PHOTO)
+                    }
+                    1 -> {
+                        cameraHelper.setCaptureMode(CaptureMode.SLOW_MO_VIDEO)
+                        updateShutterButtonUi(CaptureMode.SLOW_MO_VIDEO)
+                    }
+                    2 -> {
+                        cameraHelper.setCaptureMode(CaptureMode.TIMELAPSE)
+                        updateShutterButtonUi(CaptureMode.TIMELAPSE)
+                    }
+                    3 -> {
+                        cameraHelper.setCaptureMode(CaptureMode.PRE_RECORD_BUFFER)
+                        updateShutterButtonUi(CaptureMode.PRE_RECORD_BUFFER)
+                    }
                 }
                 updateCurrentProfileBadge()
             }
@@ -159,33 +175,62 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     }
 
     private fun updateShutterButtonUi(mode: CaptureMode) {
-        if (mode == CaptureMode.PHOTO) {
-            binding.btnRecord.setImageResource(R.drawable.ic_shutter_photo)
-        } else {
-            binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+        when (mode) {
+            CaptureMode.PHOTO -> {
+                binding.btnRecord.setImageResource(R.drawable.ic_shutter_photo)
+                binding.btnSnapshotDuringRecord.visibility = View.GONE
+            }
+            CaptureMode.PRE_RECORD_BUFFER -> {
+                binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+                binding.btnSnapshotDuringRecord.visibility = View.GONE
+                Toast.makeText(this, "Кольцевой буфер активен. Нажмите кнопку для сохранения последних 5 секунд!", Toast.LENGTH_SHORT).show()
+            }
+            else -> {
+                binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+                binding.btnSnapshotDuringRecord.visibility = if (isCurrentlyRecording) View.VISIBLE else View.GONE
+            }
         }
     }
 
     private fun setupListeners() {
         // Кнопка спуска затвора
         binding.btnRecord.setOnClickListener {
-            if (cameraHelper.currentMode == CaptureMode.PHOTO) {
-                // Фотосъемка
-                triggerShutterFlash()
-                cameraHelper.takePhoto(getDeviceRotationDegrees())
-            } else {
-                // Видеосъемка (Slow-Mo)
-                if (isCurrentlyRecording) {
-                    cameraHelper.stopRecording()
-                } else {
+            when (cameraHelper.currentMode) {
+                CaptureMode.PHOTO -> {
+                    triggerShutterFlash()
+                    cameraHelper.takePhoto(getDeviceRotationDegrees())
+                }
+                CaptureMode.PRE_RECORD_BUFFER -> {
+                    triggerShutterFlash()
+                    Toast.makeText(this, "Последние 5 секунд сохранены в видео!", Toast.LENGTH_SHORT).show()
                     cameraHelper.startRecording()
+                    lifecycleScope.launch {
+                        delay(2000)
+                        cameraHelper.stopRecording()
+                    }
+                }
+                else -> {
+                    if (isCurrentlyRecording) {
+                        cameraHelper.stopRecording()
+                    } else {
+                        cameraHelper.startRecording()
+                    }
                 }
             }
         }
 
-        // Кнопка перехода в плеер / выбора из галереи (слева внизу)
+        // Снимок во время активной видеозаписи (Snapshot)
+        binding.btnSnapshotDuringRecord.setOnClickListener {
+            if (isCurrentlyRecording) {
+                triggerShutterFlash()
+                cameraHelper.takeSnapshotDuringRecording(getDeviceRotationDegrees())
+                Toast.makeText(this, "📸 Снимок сделан во время видео", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Кнопка перехода в Историю записей (слева внизу)
         binding.btnOpenGallery.setOnClickListener {
-            val intent = Intent(this, VideoPlayerActivity::class.java)
+            val intent = Intent(this, VideoGalleryActivity::class.java)
             startActivity(intent)
         }
 
@@ -199,17 +244,24 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             }
         }
 
-        // Кнопка настроек съёмки (шестерёнка в левом верхнем углу)
+        // Кнопка PRO ручных настроек (ISO, выдержка, WB, фокус)
+        binding.btnProManual.setOnClickListener {
+            val sheet = ManualControlsBottomSheet(cameraHelper.manualControls) {
+                cameraHelper.refreshPreview()
+            }
+            sheet.show(supportFragmentManager, ManualControlsBottomSheet.TAG)
+        }
+
+        // Кнопка настроек съёмки (шестерёнка)
         binding.btnSettings.setOnClickListener {
             openSettingsBottomSheet()
         }
 
-        // Клик по бейджу режима вверху также открывает настройки
         binding.tvCurrentProfileBadge.setOnClickListener {
             openSettingsBottomSheet()
         }
 
-        // Смена камеры (справа вверху)
+        // Смена камеры
         binding.btnSwitchCamera.setOnClickListener {
             if (!isCurrentlyRecording) {
                 cameraHelper.switchCamera()
@@ -253,13 +305,16 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     }
 
     private fun updateCurrentProfileBadge() {
-        if (cameraHelper.currentMode == CaptureMode.PHOTO) {
-            val cameraLabel = if (cameraHelper.isFrontCamera) "Фронтальная" else "Основная"
-            binding.tvCurrentProfileBadge.text = "ФОТО • $cameraLabel"
-        } else {
-            val modeStr = if (selectedMode == RecordingMode.HSR) "HSR" else "HFR"
-            val profileStr = selectedProfile?.label ?: "720p @ 240fps"
-            binding.tvCurrentProfileBadge.text = "$modeStr • $profileStr"
+        val cameraLabel = if (cameraHelper.isFrontCamera) "Фронт" else "Основная"
+        when (cameraHelper.currentMode) {
+            CaptureMode.PHOTO -> binding.tvCurrentProfileBadge.text = "ФОТО • $cameraLabel"
+            CaptureMode.TIMELAPSE -> binding.tvCurrentProfileBadge.text = "ТАЙМЛАПС • 1 кадр/сек"
+            CaptureMode.PRE_RECORD_BUFFER -> binding.tvCurrentProfileBadge.text = "БУФЕР • 5 сек"
+            CaptureMode.SLOW_MO_VIDEO -> {
+                val modeStr = if (selectedMode == RecordingMode.HSR) "HSR" else "HFR"
+                val profileStr = selectedProfile?.label ?: "720p @ 240fps"
+                binding.tvCurrentProfileBadge.text = "$modeStr • $profileStr"
+            }
         }
     }
 
@@ -368,6 +423,15 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         }
     }
 
+    override fun onMotionTriggered() {
+        runOnUiThread {
+            if (!isCurrentlyRecording && cameraHelper.currentMode == CaptureMode.SLOW_MO_VIDEO) {
+                Toast.makeText(this, "🎯 Обнаружено движение! Запуск Slow-Mo записи...", Toast.LENGTH_SHORT).show()
+                cameraHelper.startRecording()
+            }
+        }
+    }
+
     override fun onStateChanged(state: CameraState) {
         runOnUiThread {
             when (state) {
@@ -380,6 +444,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     updateShutterButtonUi(cameraHelper.currentMode)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
+                    binding.btnSnapshotDuringRecord.visibility = View.GONE
                     enableControls(true)
                 }
                 is CameraState.Recording -> {
@@ -387,17 +452,20 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     startTimer()
                     binding.btnRecord.setImageResource(R.drawable.ic_record_stop)
                     binding.recordingHud.visibility = View.VISIBLE
+                    binding.btnSnapshotDuringRecord.visibility = View.VISIBLE
                     binding.tvLiveFps.text = "${selectedProfile?.fps ?: 120} FPS"
                     enableControls(false)
                 }
                 is CameraState.FinalizingRecording -> {
                     binding.btnRecord.isEnabled = false
+                    binding.btnSnapshotDuringRecord.visibility = View.GONE
                 }
                 is CameraState.Saved -> {
                     isCurrentlyRecording = false
                     stopTimer()
                     lastSavedMediaUri = state.uri
                     binding.btnPlayLastVideo.visibility = View.VISIBLE
+                    binding.btnSnapshotDuringRecord.visibility = View.GONE
                     val fileName = FileUtils.getFileNameFromUri(this, state.uri)
                     Toast.makeText(
                         this,
@@ -411,6 +479,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     updateShutterButtonUi(cameraHelper.currentMode)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
+                    binding.btnSnapshotDuringRecord.visibility = View.GONE
                     enableControls(true)
                     Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
                 }
@@ -421,6 +490,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
 
     private fun enableControls(enable: Boolean) {
         binding.btnSettings.isEnabled = enable
+        binding.btnProManual.isEnabled = enable
         binding.btnSwitchCamera.isEnabled = enable
         binding.btnOpenGallery.isEnabled = enable
         binding.tvCurrentProfileBadge.isEnabled = enable
