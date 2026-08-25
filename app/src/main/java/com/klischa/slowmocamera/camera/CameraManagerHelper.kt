@@ -1,7 +1,9 @@
 package com.klischa.slowmocamera.camera
 
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
@@ -12,23 +14,31 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.ImageReader
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.provider.MediaStore
 import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import com.klischa.slowmocamera.data.CaptureMode
 import com.klischa.slowmocamera.data.HighSpeedProfile
 import com.klischa.slowmocamera.data.VideoConfig
 import com.klischa.slowmocamera.recorder.MediaRecorderHelper
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executor
 
 /**
- * Управляет жизненным циклом Camera2, Constrained High Speed сессиями, зумом и записью Slow-Mo.
+ * Управляет Camera2: High-Speed видеосессиями, фотосъёмкой, фронтальной камерой и ориентацией.
  */
 class CameraManagerHelper(
     private val context: Context,
@@ -40,6 +50,7 @@ class CameraManagerHelper(
         fun onStateChanged(state: CameraState)
         fun onProfilesAvailable(profiles: List<HighSpeedProfile>, isHighSpeedSupported: Boolean)
         fun onSessionConfigured(previewSize: Size)
+        fun onPhotoCaptured(uri: Uri)
     }
 
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -56,6 +67,7 @@ class CameraManagerHelper(
     private var previewSurfaceTexture: SurfaceTexture? = null
     private var previewSurface: Surface? = null
     private var recorderSurface: Surface? = null
+    private var imageReader: ImageReader? = null
 
     var currentCameraId: String = "0"
         private set
@@ -63,7 +75,19 @@ class CameraManagerHelper(
     var currentConfig: VideoConfig? = null
         private set
 
+    var currentMode: CaptureMode = CaptureMode.SLOW_MO_VIDEO
+        private set
+
     var isConstrainedHighSpeedSupported: Boolean = false
+        private set
+
+    var isFrontCamera: Boolean = false
+        private set
+
+    var sensorOrientation: Int = 90
+        private set
+
+    var currentPreviewSize: Size? = null
         private set
 
     private var supportedProfiles: List<HighSpeedProfile> = emptyList()
@@ -96,8 +120,21 @@ class CameraManagerHelper(
             if (currentCameraId.isEmpty() && cameraIds.isNotEmpty()) {
                 currentCameraId = cameraIds[0]
             }
+            updateCameraMetadata(currentCameraId)
         } catch (e: Exception) {
             Log.e(tag, "Ошибка при определении камеры по умолчанию: ${e.message}")
+        }
+    }
+
+    private fun updateCameraMetadata(id: String) {
+        try {
+            val chars = cameraManager.getCameraCharacteristics(id)
+            val facing = chars.get(CameraCharacteristics.LENS_FACING)
+            isFrontCamera = facing == CameraCharacteristics.LENS_FACING_FRONT
+            sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+            setupZoomCapabilities(chars)
+        } catch (e: Exception) {
+            Log.e(tag, "Ошибка чтения метаданных камеры: ${e.message}")
         }
     }
 
@@ -129,12 +166,21 @@ class CameraManagerHelper(
             val currentIndex = cameraIds.indexOf(currentCameraId)
             val nextIndex = (currentIndex + 1) % cameraIds.size
             currentCameraId = cameraIds[nextIndex]
+            updateCameraMetadata(currentCameraId)
             currentZoomRatio = 1.0f
 
             closeCamera()
             previewSurfaceTexture?.let { openCamera(it) }
         } catch (e: Exception) {
             Log.e(tag, "Ошибка переключения камеры: ${e.message}")
+        }
+    }
+
+    fun setCaptureMode(mode: CaptureMode) {
+        if (currentMode == mode) return
+        currentMode = mode
+        if (cameraDevice != null && previewSurfaceTexture != null && !isRecording) {
+            startSession()
         }
     }
 
@@ -146,13 +192,10 @@ class CameraManagerHelper(
         listener.onStateChanged(CameraState.Initializing)
 
         try {
-            val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
+            updateCameraMetadata(currentCameraId)
             isConstrainedHighSpeedSupported = halChecker.isHighSpeedConstrainedSupported(currentCameraId)
             supportedProfiles = halChecker.getSupportedProfilesForCamera(currentCameraId)
             listener.onProfilesAvailable(supportedProfiles, isConstrainedHighSpeedSupported)
-
-            // Считывание параметров зума
-            setupZoomCapabilities(characteristics)
 
             val selectedProfile = supportedProfiles.firstOrNull() ?: HighSpeedProfile(
                 size = Size(1280, 720),
@@ -201,11 +244,6 @@ class CameraManagerHelper(
         currentZoomRatio = minZoomRatio
     }
 
-    /**
-     * Изменение коэффициента приближения (Zoom).
-     * @param factor масштабный множитель или новое значение зума
-     * @return итоговый установленный коэффициент зума
-     */
     fun setZoomRatio(targetRatio: Float): Float {
         val clamped = targetRatio.coerceIn(minZoomRatio, maxZoomRatio)
         if (Math.abs(clamped - currentZoomRatio) < 0.01f) return currentZoomRatio
@@ -229,7 +267,6 @@ class CameraManagerHelper(
             } catch (ignored: Exception) {}
         }
 
-        // Fallback через SCALER_CROP_REGION для совместимости
         val active = sensorActiveArray ?: return
         val cropWidth = (active.width() / currentZoomRatio).toInt()
         val cropHeight = (active.height() / currentZoomRatio).toInt()
@@ -242,8 +279,8 @@ class CameraManagerHelper(
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
             cameraDevice = camera
-            Log.i(tag, "Камера $currentCameraId успешно открыта")
-            startHighSpeedSession()
+            Log.i(tag, "Камера $currentCameraId успешно открыта (Фронтальная: $isFrontCamera)")
+            startSession()
         }
 
         override fun onDisconnected(camera: CameraDevice) {
@@ -274,29 +311,26 @@ class CameraManagerHelper(
     fun updateConfig(config: VideoConfig) {
         currentConfig = config
         if (cameraDevice != null && previewSurfaceTexture != null && !isRecording) {
-            startHighSpeedSession()
+            startSession()
         }
     }
 
-    /**
-     * Создает Constrained High Speed Capture Session для камеры.
-     */
-    private fun startHighSpeedSession() {
+    private fun startSession() {
         val device = cameraDevice ?: return
         val texture = previewSurfaceTexture ?: return
         val config = currentConfig ?: return
         val handler = backgroundHandler ?: return
 
         try {
-            // Очистка предыдущих сессий
             highSpeedSession?.close()
             highSpeedSession = null
             standardSession?.close()
             standardSession = null
+            imageReader?.close()
+            imageReader = null
 
-            // Важнейшее требование Camera2 Constrained High Speed:
-            // Буфер SurfaceTexture ДОЛЖЕН строго соответствовать выбранному High Speed размеру (например 1280x720)
             val profileSize = config.profile.size
+            currentPreviewSize = profileSize
             texture.setDefaultBufferSize(profileSize.width, profileSize.height)
 
             previewSurface?.release()
@@ -305,21 +339,82 @@ class CameraManagerHelper(
 
             listener.onSessionConfigured(profileSize)
 
-            // Подготовка MediaRecorder Surface заранее, так как Constrained High Speed сессия
-            // требует все целевые поверхности (surfaces) при создании сессии!
-            val newRecorderSurface = mediaRecorderHelper.setupRecorder(config)
-            recorderSurface = newRecorderSurface
-
-            val surfaces = listOf(newPreviewSurface, newRecorderSurface)
-
-            if (isConstrainedHighSpeedSupported && config.profile.isConstrainedSupported) {
-                createConstrainedSession(device, surfaces, handler)
+            if (currentMode == CaptureMode.PHOTO) {
+                // Фоторежим: настраиваем ImageReader для сохранения полноразмерных снимков
+                setupPhotoSession(device, newPreviewSurface, handler)
             } else {
-                createStandardSession(device, surfaces, handler)
+                // Видеорежим (Slow-Mo / HFR / HSR)
+                setupVideoSession(device, newPreviewSurface, config, handler)
             }
         } catch (e: Exception) {
             Log.e(tag, "Ошибка настройки сессии: ${e.message}", e)
             handleSessionCreationFailure(e)
+        }
+    }
+
+    private fun setupPhotoSession(device: CameraDevice, preview: Surface, handler: Handler) {
+        val chars = cameraManager.getCameraCharacteristics(currentCameraId)
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG) ?: arrayOf(Size(1920, 1080))
+        val largestJpeg = jpegSizes.maxByOrNull { it.width * it.height } ?: Size(1920, 1080)
+
+        val reader = ImageReader.newInstance(largestJpeg.width, largestJpeg.height, ImageFormat.JPEG, 2)
+        reader.setOnImageAvailableListener({ r ->
+            val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+            val buffer = image.planes[0].buffer
+            val bytes = ByteArray(buffer.remaining())
+            buffer.get(bytes)
+            image.close()
+
+            saveCapturedPhoto(bytes)
+        }, handler)
+        imageReader = reader
+
+        val surfaces = listOf(preview, reader.surface)
+        createStandardSession(device, surfaces, handler)
+    }
+
+    private fun saveCapturedPhoto(bytes: ByteArray) {
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val fileName = "SlowMo_Photo_${timestamp}.jpg"
+
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SlowMoCamera")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+
+            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(bytes)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    context.contentResolver.update(uri, contentValues, null, null)
+                }
+                listener.onPhotoCaptured(uri)
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Ошибка сохранения фото: ${e.message}", e)
+        }
+    }
+
+    private fun setupVideoSession(device: CameraDevice, preview: Surface, config: VideoConfig, handler: Handler) {
+        val newRecorderSurface = mediaRecorderHelper.setupRecorder(config)
+        recorderSurface = newRecorderSurface
+        val surfaces = listOf(preview, newRecorderSurface)
+
+        // На фронтальной камере всегда используем стандартную сессию для гарантированной стабильности
+        if (!isFrontCamera && isConstrainedHighSpeedSupported && config.profile.isConstrainedSupported) {
+            createConstrainedSession(device, surfaces, handler)
+        } else {
+            createStandardSession(device, surfaces, handler)
         }
     }
 
@@ -386,17 +481,26 @@ class CameraManagerHelper(
         }
 
         override fun onConfigureFailed(session: CameraCaptureSession) {
-            Log.e(tag, "onConfigureFailed в HighSpeedCaptureSession")
-            handleSessionCreationFailure(
-                IllegalStateException("HAL вендора (Infinix/MTK) отклонил сессию высокой скорости")
-            )
+            Log.e(tag, "onConfigureFailed в HighSpeedCaptureSession, переключаемся на стандартную сессию")
+            // Автоматический фолбэк на стандартную сессию
+            val device = cameraDevice
+            val preview = previewSurface
+            val recorder = recorderSurface
+            val handler = backgroundHandler
+            if (device != null && preview != null && recorder != null && handler != null) {
+                createStandardSession(device, listOf(preview, recorder), handler)
+            } else {
+                handleSessionCreationFailure(
+                    IllegalStateException("HAL вендора отклонил сессию высокой скорости")
+                )
+            }
         }
     }
 
     private val standardSessionCallback = object : CameraCaptureSession.StateCallback() {
         override fun onConfigured(session: CameraCaptureSession) {
             standardSession = session
-            Log.i(tag, "Стандартная сессия сконфигурирована (Fallback)")
+            Log.i(tag, "Стандартная сессия сконфигурирована")
             startStandardPreview()
             listener.onStateChanged(CameraState.PreviewReady(currentCameraId, isHighSpeedCapable = false))
         }
@@ -404,14 +508,11 @@ class CameraManagerHelper(
         override fun onConfigureFailed(session: CameraCaptureSession) {
             Log.e(tag, "onConfigureFailed в CameraCaptureSession")
             listener.onStateChanged(
-                CameraState.Error("Ошибка конфигурации стандартной сессии камеры", isHalRestriction = false)
+                CameraState.Error("Ошибка конфигурации сессии камеры", isHalRestriction = false)
             )
         }
     }
 
-    /**
-     * Запуск предпросмотра в режиме High-Speed через createHighSpeedRequestList и setRepeatingBurst.
-     */
     private fun startHighSpeedPreview() {
         val session = highSpeedSession ?: return
         val device = cameraDevice ?: return
@@ -420,25 +521,18 @@ class CameraManagerHelper(
         val handler = backgroundHandler ?: return
 
         try {
-            // Для High-Speed сессий создается TEMPLATE_RECORD запрос
             val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 addTarget(surface)
                 set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
-                // Установка целевого диапазона частоты кадров
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
-            // Применение зума
             applyZoom(builder)
-
-            // Внедрение MediaTek Vendor Tags для обхода ограничений
             MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
 
-            // Создаем список высокоскоростных запросов (burst)
             val highSpeedRequestList = session.createHighSpeedRequestList(builder.build())
             session.setRepeatingBurst(highSpeedRequestList, null, handler)
-            Log.i(tag, "High-Speed превью запущено с FPS ${config.profile.fps}, Zoom: ${currentZoomRatio}x")
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска High-Speed превью: ${e.message}", e)
         }
@@ -452,20 +546,56 @@ class CameraManagerHelper(
         val handler = backgroundHandler ?: return
 
         try {
-            val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            val template = if (currentMode == CaptureMode.PHOTO) CameraDevice.TEMPLATE_PREVIEW else CameraDevice.TEMPLATE_RECORD
+            val builder = device.createCaptureRequest(template).apply {
                 addTarget(surface)
                 set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
-            // Применение зума
             applyZoom(builder)
-
             MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
             session.setRepeatingRequest(builder.build(), null, handler)
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска стандартного превью: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Спуск затвора для создания фотоснимка.
+     */
+    fun takePhoto(deviceRotationDegrees: Int) {
+        val session = standardSession ?: return
+        val device = cameraDevice ?: return
+        val reader = imageReader ?: return
+        val handler = backgroundHandler ?: return
+
+        try {
+            val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(reader.surface)
+                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+
+                // Вычисление правильной ориентации JPEG
+                val jpegOrientation = if (isFrontCamera) {
+                    (sensorOrientation + deviceRotationDegrees) % 360
+                } else {
+                    (sensorOrientation - deviceRotationDegrees + 360) % 360
+                }
+                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
+            }
+            applyZoom(builder)
+
+            session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                    Log.i(tag, "Фотоснимок успешно захвачен")
+                }
+            }, handler)
+        } catch (e: Exception) {
+            Log.e(tag, "Ошибка фотосъёмки: ${e.message}", e)
+            listener.onStateChanged(CameraState.Error("Ошибка фотосъёмки: ${e.message}"))
         }
     }
 
@@ -482,7 +612,6 @@ class CameraManagerHelper(
             isRecording = true
 
             if (highSpeedSession != null) {
-                // High-Speed запись: добавляем И preview surface, И recorder surface
                 val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(preview)
                     addTarget(recorder)
@@ -502,6 +631,7 @@ class CameraManagerHelper(
                     addTarget(recorder)
                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                     set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
                 applyZoom(builder)
                 MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
@@ -509,7 +639,7 @@ class CameraManagerHelper(
             }
 
             listener.onStateChanged(CameraState.Recording(durationSeconds = 0))
-            Log.i(tag, "Запись видео успешно начата (Режим: ${config.mode}, FPS: ${config.profile.fps})")
+            Log.i(tag, "Запись видео успешно начата (Фронтальная: $isFrontCamera, FPS: ${config.profile.fps})")
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска записи: ${e.message}", e)
             isRecording = false
@@ -527,7 +657,6 @@ class CameraManagerHelper(
             val savedUri = mediaRecorderHelper.stop()
             isRecording = false
 
-            // Возврат к обычному превью без записи на рекордер
             if (highSpeedSession != null) {
                 startHighSpeedPreview()
             } else if (standardSession != null) {
@@ -542,8 +671,7 @@ class CameraManagerHelper(
                 )
             }
 
-            // Пересоздаем сессию для готовности к следующей записи
-            startHighSpeedSession()
+            startSession()
         } catch (e: Exception) {
             Log.e(tag, "Ошибка остановки записи: ${e.message}", e)
             isRecording = false
@@ -582,6 +710,8 @@ class CameraManagerHelper(
             highSpeedSession = null
             standardSession?.close()
             standardSession = null
+            imageReader?.close()
+            imageReader = null
 
             cameraDevice?.close()
             cameraDevice = null

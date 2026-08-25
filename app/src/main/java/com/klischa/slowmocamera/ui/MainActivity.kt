@@ -2,22 +2,27 @@ package com.klischa.slowmocamera.ui
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.SurfaceTexture
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Size
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.tabs.TabLayout
 import com.klischa.slowmocamera.R
 import com.klischa.slowmocamera.camera.CameraManagerHelper
 import com.klischa.slowmocamera.camera.CameraState
+import com.klischa.slowmocamera.data.CaptureMode
 import com.klischa.slowmocamera.data.HighSpeedProfile
 import com.klischa.slowmocamera.data.OutputFormatType
 import com.klischa.slowmocamera.data.RecordingMode
@@ -41,7 +46,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     private var selectedProfile: HighSpeedProfile? = null
     private var availableProfiles: List<HighSpeedProfile> = emptyList()
 
-    private var lastSavedVideoUri: Uri? = null
+    private var lastSavedMediaUri: Uri? = null
     private var isCurrentlyRecording = false
     private var timerJob: Job? = null
     private var zoomFadeJob: Job? = null
@@ -76,6 +81,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
 
         setupGestures()
         setupListeners()
+        setupModeTabs()
         checkPermissionsAndStart()
     }
 
@@ -128,13 +134,52 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         }
     }
 
+    private fun setupModeTabs() {
+        // Выбор по умолчанию: SLOW-MO
+        val slowMoTab = binding.tabCaptureMode.getTabAt(1)
+        slowMoTab?.select()
+
+        binding.tabCaptureMode.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                if (tab?.position == 0) {
+                    // ФОТО
+                    cameraHelper.setCaptureMode(CaptureMode.PHOTO)
+                    updateShutterButtonUi(CaptureMode.PHOTO)
+                } else {
+                    // SLOW-MO
+                    cameraHelper.setCaptureMode(CaptureMode.SLOW_MO_VIDEO)
+                    updateShutterButtonUi(CaptureMode.SLOW_MO_VIDEO)
+                }
+                updateCurrentProfileBadge()
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab?) {}
+            override fun onTabReselected(tab: TabLayout.Tab?) {}
+        })
+    }
+
+    private fun updateShutterButtonUi(mode: CaptureMode) {
+        if (mode == CaptureMode.PHOTO) {
+            binding.btnRecord.setImageResource(R.drawable.ic_shutter_photo)
+        } else {
+            binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+        }
+    }
+
     private fun setupListeners() {
-        // Кнопка записи в центре
+        // Кнопка спуска затвора
         binding.btnRecord.setOnClickListener {
-            if (isCurrentlyRecording) {
-                cameraHelper.stopRecording()
+            if (cameraHelper.currentMode == CaptureMode.PHOTO) {
+                // Фотосъемка
+                triggerShutterFlash()
+                cameraHelper.takePhoto(getDeviceRotationDegrees())
             } else {
-                cameraHelper.startRecording()
+                // Видеосъемка (Slow-Mo)
+                if (isCurrentlyRecording) {
+                    cameraHelper.stopRecording()
+                } else {
+                    cameraHelper.startRecording()
+                }
             }
         }
 
@@ -144,9 +189,9 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             startActivity(intent)
         }
 
-        // Просмотр последнего записанного видео (справа внизу)
+        // Просмотр последнего сохраненного медиа (справа внизу)
         binding.btnPlayLastVideo.setOnClickListener {
-            lastSavedVideoUri?.let { uri ->
+            lastSavedMediaUri?.let { uri ->
                 val intent = Intent(this, VideoPlayerActivity::class.java).apply {
                     putExtra(VideoPlayerActivity.EXTRA_VIDEO_URI, uri.toString())
                 }
@@ -168,8 +213,21 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         binding.btnSwitchCamera.setOnClickListener {
             if (!isCurrentlyRecording) {
                 cameraHelper.switchCamera()
+                applyTransform(binding.textureView.width, binding.textureView.height)
             }
         }
+    }
+
+    private fun triggerShutterFlash() {
+        binding.viewShutterFlash.visibility = View.VISIBLE
+        binding.viewShutterFlash.alpha = 0.8f
+        binding.viewShutterFlash.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction {
+                binding.viewShutterFlash.visibility = View.GONE
+            }
+            .start()
     }
 
     private fun openSettingsBottomSheet() {
@@ -195,14 +253,20 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     }
 
     private fun updateCurrentProfileBadge() {
-        val modeStr = if (selectedMode == RecordingMode.HSR) "HSR" else "HFR"
-        val profileStr = selectedProfile?.label ?: "720p @ 240fps"
-        binding.tvCurrentProfileBadge.text = "$modeStr • $profileStr"
+        if (cameraHelper.currentMode == CaptureMode.PHOTO) {
+            val cameraLabel = if (cameraHelper.isFrontCamera) "Фронтальная" else "Основная"
+            binding.tvCurrentProfileBadge.text = "ФОТО • $cameraLabel"
+        } else {
+            val modeStr = if (selectedMode == RecordingMode.HSR) "HSR" else "HFR"
+            val profileStr = selectedProfile?.label ?: "720p @ 240fps"
+            binding.tvCurrentProfileBadge.text = "$modeStr • $profileStr"
+        }
     }
 
     private fun setupCameraPreview() {
         if (binding.textureView.isAvailable) {
             cameraHelper.openCamera(binding.textureView.surfaceTexture!!)
+            applyTransform(binding.textureView.width, binding.textureView.height)
         } else {
             binding.textureView.surfaceTextureListener = surfaceTextureListener
         }
@@ -211,9 +275,12 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
             cameraHelper.openCamera(surface)
+            applyTransform(width, height)
         }
 
-        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+            applyTransform(width, height)
+        }
 
         override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
             cameraHelper.closeCamera()
@@ -221,6 +288,47 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         }
 
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        binding.textureView.post {
+            applyTransform(binding.textureView.width, binding.textureView.height)
+        }
+    }
+
+    private fun applyTransform(viewWidth: Int, viewHeight: Int) {
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.rotation ?: Surface.ROTATION_0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.rotation
+        }
+
+        binding.textureView.configureTransform(
+            viewWidth = viewWidth,
+            viewHeight = viewHeight,
+            previewSize = cameraHelper.currentPreviewSize,
+            displayRotation = rotation,
+            sensorOrientation = cameraHelper.sensorOrientation,
+            isFrontCamera = cameraHelper.isFrontCamera
+        )
+    }
+
+    private fun getDeviceRotationDegrees(): Int {
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.rotation ?: Surface.ROTATION_0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.rotation
+        }
+        return when (rotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
     }
 
     override fun onProfilesAvailable(profiles: List<HighSpeedProfile>, isHighSpeedSupported: Boolean) {
@@ -247,6 +355,16 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     override fun onSessionConfigured(previewSize: Size) {
         runOnUiThread {
             binding.textureView.setAspectRatio(previewSize.height, previewSize.width)
+            applyTransform(binding.textureView.width, binding.textureView.height)
+        }
+    }
+
+    override fun onPhotoCaptured(uri: Uri) {
+        runOnUiThread {
+            lastSavedMediaUri = uri
+            binding.btnPlayLastVideo.visibility = View.VISIBLE
+            val fileName = FileUtils.getFileNameFromUri(this, uri)
+            Toast.makeText(this, "Фото сохранено: $fileName", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -259,7 +377,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                 is CameraState.PreviewReady -> {
                     isCurrentlyRecording = false
                     stopTimer()
-                    binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+                    updateShutterButtonUi(cameraHelper.currentMode)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
                     enableControls(true)
@@ -278,7 +396,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                 is CameraState.Saved -> {
                     isCurrentlyRecording = false
                     stopTimer()
-                    lastSavedVideoUri = state.uri
+                    lastSavedMediaUri = state.uri
                     binding.btnPlayLastVideo.visibility = View.VISIBLE
                     val fileName = FileUtils.getFileNameFromUri(this, state.uri)
                     Toast.makeText(
@@ -290,7 +408,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                 is CameraState.Error -> {
                     isCurrentlyRecording = false
                     stopTimer()
-                    binding.btnRecord.setImageResource(R.drawable.ic_record_start)
+                    updateShutterButtonUi(cameraHelper.currentMode)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
                     enableControls(true)
@@ -306,6 +424,10 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         binding.btnSwitchCamera.isEnabled = enable
         binding.btnOpenGallery.isEnabled = enable
         binding.tvCurrentProfileBadge.isEnabled = enable
+        binding.tabCaptureMode.isEnabled = enable
+        for (i in 0 until binding.tabCaptureMode.tabCount) {
+            binding.tabCaptureMode.getTabAt(i)?.view?.isEnabled = enable
+        }
     }
 
     private fun startTimer() {
@@ -340,6 +462,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         if (PermissionUtils.hasAllPermissions(this)) {
             if (binding.textureView.isAvailable) {
                 cameraHelper.openCamera(binding.textureView.surfaceTexture!!)
+                applyTransform(binding.textureView.width, binding.textureView.height)
             } else {
                 binding.textureView.surfaceTextureListener = surfaceTextureListener
             }
