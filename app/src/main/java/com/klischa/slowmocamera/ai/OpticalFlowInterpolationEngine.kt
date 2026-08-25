@@ -25,19 +25,19 @@ class OpticalFlowInterpolationEngine(private val context: Context) {
     data class MotionVector(val dx: Float, val dy: Float)
 
     /**
-     * Создает интерполированный промежуточный кадр между frameA и frameB с весом alpha (0.0 .. 1.0).
+     * Создает интерполированный промежуточный кадр между frameA и frameB с весом blendAlpha (0.0 .. 1.0).
      */
-    fun interpolateFrame(frameA: Bitmap, frameB: Bitmap, alpha: Float): Bitmap {
+    fun interpolateFrame(frameA: Bitmap, frameB: Bitmap, blendAlpha: Float): Bitmap {
         val width = frameA.width
         val height = frameA.height
         val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
 
-        val paintA = Paint().apply { alpha = ((1.0f - alpha) * 255).toInt() }
-        val paintB = Paint().apply { alpha = (alpha * 255).toInt() }
+        val paintA = Paint().apply { setAlpha(((1.0f - blendAlpha) * 255).toInt()) }
+        val paintB = Paint().apply { setAlpha((blendAlpha * 255).toInt()) }
 
         // Рисуем базовую композицию
-        canvas.drawBitmap(frameA, 0f, 0f, null)
+        canvas.drawBitmap(frameA, 0f, 0f, paintA)
         canvas.drawBitmap(frameB, 0f, 0f, paintB)
 
         return output
