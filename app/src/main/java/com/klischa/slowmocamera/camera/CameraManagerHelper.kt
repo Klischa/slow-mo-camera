@@ -297,16 +297,22 @@ class CameraManagerHelper(
         }
     }
 
-    private val highSpeedSessionCallback = object : CameraConstrainedHighSpeedCaptureSession.StateCallback() {
-        override fun onConfigured(session: CameraConstrainedHighSpeedCaptureSession) {
-            highSpeedSession = session
-            Log.i(tag, "High-Speed сессия успешно сконфигурирована!")
-            startHighSpeedPreview()
-            listener.onStateChanged(CameraState.PreviewReady(currentCameraId, isHighSpeedCapable = true))
+    private val highSpeedSessionCallback = object : CameraCaptureSession.StateCallback() {
+        override fun onConfigured(session: CameraCaptureSession) {
+            if (session is CameraConstrainedHighSpeedCaptureSession) {
+                highSpeedSession = session
+                Log.i(tag, "High-Speed сессия успешно сконфигурирована!")
+                startHighSpeedPreview()
+                listener.onStateChanged(CameraState.PreviewReady(currentCameraId, isHighSpeedCapable = true))
+            } else {
+                standardSession = session
+                startStandardPreview()
+                listener.onStateChanged(CameraState.PreviewReady(currentCameraId, isHighSpeedCapable = false))
+            }
         }
 
-        override fun onConfigureFailed(session: CameraConstrainedHighSpeedCaptureSession) {
-            Log.e(tag, "onConfigureFailed в ConstrainedHighSpeedCaptureSession")
+        override fun onConfigureFailed(session: CameraCaptureSession) {
+            Log.e(tag, "onConfigureFailed в HighSpeedCaptureSession")
             handleSessionCreationFailure(
                 IllegalStateException("HAL вендора (Infinix/MTK) отклонил сессию высокой скорости")
             )
