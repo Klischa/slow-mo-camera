@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Slow-Mo Camera</string>
+    <string name="action_diagnostics">HAL Диагностика</string>
+    <string name="action_switch_camera">Сменить камеру</string>
+    <string name="status_ready">Готов к записи</string>
+    <string name="status_recording">Идёт запись...</string>
+    <string name="status_saving">Сохранение видео...</string>
+    <string name="status_initializing">Инициализация Camera2...</string>
+
+    <!-- Capabilities -->
+    <string name="hal_status_supported">High-Speed HAL: Поддерживается</string>
+    <string name="hal_status_restricted">High-Speed HAL: Ограничен вендором (Infinix/MTK)</string>
+    <string name="hal_status_unsupported">High-Speed HAL: Не поддерживается</string>
+
+    <!-- Mode Selector -->
+    <string name="mode_hfr">HFR Slow-Mo (30fps файл)</string>
+    <string name="mode_hsr">HSR High-FPS (быстрый файл)</string>
+    <string name="mode_hfr_desc">Захват на 120/240 fps, сохранение с 30 fps. Видео сразу воспроизводится замедленно.</string>
+    <string name="mode_hsr_desc">Захват и сохранение на 120/240 fps. Плеер сам может регулировать скорость.</string>
+
+    <!-- Codec -->
+    <string name="codec_mp4_h264">MP4 (H.264 / AVC)</string>
+    <string name="codec_webm_vp9">WebM (VP9)</string>
+
+    <!-- Errors & Prompts -->
+    <string name="error_camera_permission">Необходимо разрешение камеры для работы приложения.</string>
+    <string name="error_audio_permission">Необходимо разрешение микрофона для записи звука.</string>
+    <string name="error_camera_open_failed">Не удалось открыть камеру: %1$s</string>
+    <string name="error_session_failed">Ошибка создания сессии Constrained High Speed: %1$s</string>
+    <string name="error_recording_failed">Ошибка записи: %1$s</string>
+    <string name="video_saved_success">Видео сохранено в Галерею: %1$s</string>
+    <string name="btn_play_last_video">Смотреть последнее видео</string>
+
+    <!-- Dialogs -->
+    <string name="dialog_hal_title">Диагностика камеры и HAL</string>
+    <string name="dialog_close">Закрыть</string>
+    <string name="dialog_copy_report">Скопировать отчёт</string>
+</resources>
