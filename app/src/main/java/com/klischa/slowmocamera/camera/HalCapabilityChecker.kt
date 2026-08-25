@@ -132,8 +132,9 @@ class HalCapabilityChecker(private val context: Context) {
             }
         }
 
-        if (profiles.isEmpty() && hasHighSpeed) {
-            notes.add("Камера заявила поддержку High-Speed, но не предоставила поддерживаемых размеров StreamConfigurationMap.")
+        val mtkKeys = MtkVendorTagHelper.findMtkVendorKeys(chars)
+        if (mtkKeys.isNotEmpty()) {
+            notes.add("Обнаружены проприетарные MediaTek Vendor Tags: ${mtkKeys.joinToString(", ")}")
         }
 
         return CameraHalInfo(
@@ -179,15 +180,41 @@ class HalCapabilityChecker(private val context: Context) {
             }
         }
 
-        // Если профили не найдены, создаем стандартные фолбэки для 720p/1080p если поддерживаются
+        // Если профили не найдены (ограничение вендора MTK/Infinix), добавляем доступные High-Speed режимы
+        // для работы через MTK Vendor Tags / Root Property Unlock
         if (profileList.isEmpty()) {
-            val standardRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: emptyArray()
-            val maxRange = standardRanges.maxByOrNull { it.upper } ?: Range(30, 30)
-            val size720 = Size(1280, 720)
             profileList.add(
                 HighSpeedProfile(
-                    size = size720,
-                    fpsRange = maxRange,
+                    size = Size(1280, 720),
+                    fpsRange = Range(120, 120),
+                    isConstrainedSupported = false
+                )
+            )
+            profileList.add(
+                HighSpeedProfile(
+                    size = Size(1280, 720),
+                    fpsRange = Range(240, 240),
+                    isConstrainedSupported = false
+                )
+            )
+            profileList.add(
+                HighSpeedProfile(
+                    size = Size(1920, 1080),
+                    fpsRange = Range(120, 120),
+                    isConstrainedSupported = false
+                )
+            )
+            profileList.add(
+                HighSpeedProfile(
+                    size = Size(1920, 1080),
+                    fpsRange = Range(60, 60),
+                    isConstrainedSupported = false
+                )
+            )
+            profileList.add(
+                HighSpeedProfile(
+                    size = Size(1280, 720),
+                    fpsRange = Range(30, 30),
                     isConstrainedSupported = false
                 )
             )

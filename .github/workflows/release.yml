@@ -55,6 +55,13 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+      # Upload APK and Magisk Module as Artifact
+      - name: Pack Magisk Module
+        run: |
+          cd magisk_module
+          zip -r ../Infinix_MTK_SlowMo_Unlock_Magisk.zip ./*
+          cd ..
+
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -62,6 +69,7 @@ jobs:
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
+            Infinix_MTK_SlowMo_Unlock_Magisk.zip
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -70,6 +78,7 @@ jobs:
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
+            Infinix_MTK_SlowMo_Unlock_Magisk.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

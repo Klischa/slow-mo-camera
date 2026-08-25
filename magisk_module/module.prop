@@ -1,0 +1,6 @@
+id=infinix_mtk_slowmo_unlock
+name=Infinix & MediaTek Camera2 Slow-Mo Unlocker
+version=v1.0
+versionCode=1
+author=Klischa & Agent
+description=Разблокирует 60/120/240 FPS, High-Speed HAL и PrivApp Whitelist для сторонних приложений на MediaTek Helio G99 (Infinix Note 30).

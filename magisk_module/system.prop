@@ -1,0 +1,17 @@
+# MediaTek Camera2 HAL3 High-Speed & FPS Unlock
+persist.vendor.camera.privapp.list=com.klischa.slowmocamera,com.transsion.camera,com.infinix.camera,com.android.camera,com.google.android.GoogleCamera
+vendor.camera.privapp.list=com.klischa.slowmocamera,com.transsion.camera,com.infinix.camera,com.android.camera
+
+persist.vendor.camera.highspeed.enable=1
+persist.vendor.camera.p1.highspeed=1
+persist.vendor.camera.support.60fps=1
+persist.vendor.camera.support.120fps=1
+persist.vendor.camera.support.240fps=1
+persist.vendor.camera.sensor.60fps=1
+persist.vendor.camera.sensor.120fps=1
+persist.vendor.camera.sensor.240fps=1
+
+persist.vendor.camera.feature.slowmotion=1
+persist.vendor.camera.expose.aux=1
+vendor.camera.highspeed.enable=1
+ro.vendor.camera.sensor.slowmotion=1

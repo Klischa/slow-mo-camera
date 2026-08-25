@@ -355,6 +355,8 @@ class CameraManagerHelper(
                 // Установка целевого диапазона частоты кадров
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
+            // Внедрение MediaTek Vendor Tags для обхода ограничений
+            MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
 
             // Создаем список высокоскоростных запросов (burst)
             val highSpeedRequestList = session.createHighSpeedRequestList(builder.build())
@@ -380,6 +382,7 @@ class CameraManagerHelper(
                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
+            MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
             session.setRepeatingRequest(builder.build(), null, handler)
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска стандартного превью: ${e.message}", e)
@@ -408,6 +411,7 @@ class CameraManagerHelper(
                     set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
+                MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
 
                 val requestList = highSpeedSession!!.createHighSpeedRequestList(builder.build())
                 highSpeedSession!!.setRepeatingBurst(requestList, null, handler)
@@ -418,6 +422,7 @@ class CameraManagerHelper(
                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                     set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 }
+                MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
                 standardSession!!.setRepeatingRequest(builder.build(), null, handler)
             }
 
