@@ -79,6 +79,9 @@ dependencies {
     implementation("androidx.media3:media3-effect:1.3.1")
     implementation("androidx.media3:media3-common:1.3.1")
 
+    // WorkManager for background AI Frame Interpolation tasks
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 

@@ -16,6 +16,7 @@ import com.klischa.slowmocamera.R
 import com.klischa.slowmocamera.ai.AutoHighlightsEngine
 import com.klischa.slowmocamera.ai.OpticalFlowInterpolationEngine
 import com.klischa.slowmocamera.ai.SpeechSubtitleGenerator
+import com.klischa.slowmocamera.ai.interpolation.AiInterpolationActivity
 import com.klischa.slowmocamera.data.OutputFormatType
 import com.klischa.slowmocamera.databinding.ActivityVideoEditorBinding
 import com.klischa.slowmocamera.util.FileUtils
@@ -156,25 +157,13 @@ class VideoEditorActivity : AppCompatActivity() {
     }
 
     private fun setupAiButtons() {
-        // 1. AI Сглаживание (Optical Flow 4x)
+        // 1. AI Сглаживание (Optical Flow / RIFE NCNN)
         binding.btnAiOpticalFlow.setOnClickListener {
             val uri = inputVideoUri ?: return@setOnClickListener
-            binding.cardExportProgress.visibility = View.VISIBLE
-            binding.progressExport.progress = 0
-            binding.tvExportPercent.text = "AI Optical Flow сглаживание: 0%"
-
-            lifecycleScope.launch {
-                val frames = opticalFlowEngine.processVideoSmoothing(uri, multiplier = 4) { percent ->
-                    binding.progressExport.progress = percent
-                    binding.tvExportPercent.text = "AI Optical Flow: $percent%"
-                }
-
-                binding.cardExportProgress.visibility = View.GONE
-                currentSpeedFactor = 0.25f
-                binding.chipSpeed025.isChecked = true
-                player?.playbackParameters = PlaybackParameters(0.25f)
-                Toast.makeText(this@VideoEditorActivity, "🧠 Создано $frames интерполированных кадров. Видео ультра-плавно замедлено в 4x!", Toast.LENGTH_LONG).show()
+            val intent = Intent(this, AiInterpolationActivity::class.java).apply {
+                putExtra(AiInterpolationActivity.EXTRA_VIDEO_URI, uri.toString())
             }
+            startActivity(intent)
         }
 
         // 2. Авто-хайлайты (Лучшие моменты)
