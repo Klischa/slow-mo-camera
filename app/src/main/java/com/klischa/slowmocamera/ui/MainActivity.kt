@@ -1,20 +1,20 @@
 package com.klischa.slowmocamera.ui
 
+import android.annotation.SuppressLint
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log
 import android.util.Size
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.TextureView
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.chip.Chip
 import com.klischa.slowmocamera.R
 import com.klischa.slowmocamera.camera.CameraManagerHelper
 import com.klischa.slowmocamera.camera.CameraState
@@ -29,10 +29,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListener {
-
-    private val tag = "MainActivity"
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraHelper: CameraManagerHelper
@@ -45,7 +44,11 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     private var lastSavedVideoUri: Uri? = null
     private var isCurrentlyRecording = false
     private var timerJob: Job? = null
+    private var zoomFadeJob: Job? = null
     private var recordingSeconds = 0L
+
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
+    private lateinit var gestureDetector: GestureDetector
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -71,6 +74,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
 
         cameraHelper = CameraManagerHelper(this, this)
 
+        setupGestures()
         setupListeners()
         checkPermissionsAndStart()
     }
@@ -83,7 +87,49 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         }
     }
 
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupGestures() {
+        // Жест щипка (Pinch-to-zoom): разводим пальцы -> приближаем, сводим -> отдаляем
+        scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val scaleFactor = detector.scaleFactor
+                val currentZoom = cameraHelper.currentZoomRatio
+                val targetZoom = currentZoom * scaleFactor
+                val newZoom = cameraHelper.setZoomRatio(targetZoom)
+                showZoomBadge(newZoom)
+                return true
+            }
+        })
+
+        // Двойное нажатие для сброса зума на 1.0x
+        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val newZoom = cameraHelper.setZoomRatio(1.0f)
+                showZoomBadge(newZoom)
+                return true
+            }
+        })
+
+        binding.textureView.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            scaleGestureDetector.onTouchEvent(event)
+            true
+        }
+    }
+
+    private fun showZoomBadge(zoom: Float) {
+        binding.tvZoomBadge.visibility = View.VISIBLE
+        binding.tvZoomBadge.text = String.format(Locale.US, "%.1fx", zoom)
+
+        zoomFadeJob?.cancel()
+        zoomFadeJob = lifecycleScope.launch {
+            delay(1200)
+            binding.tvZoomBadge.visibility = View.GONE
+        }
+    }
+
     private fun setupListeners() {
+        // Кнопка записи в центре
         binding.btnRecord.setOnClickListener {
             if (isCurrentlyRecording) {
                 cameraHelper.stopRecording()
@@ -92,20 +138,13 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             }
         }
 
-        binding.btnSwitchCamera.setOnClickListener {
-            if (!isCurrentlyRecording) {
-                cameraHelper.switchCamera()
-            }
+        // Кнопка перехода в плеер / выбора из галереи (слева внизу)
+        binding.btnOpenGallery.setOnClickListener {
+            val intent = Intent(this, VideoPlayerActivity::class.java)
+            startActivity(intent)
         }
 
-        binding.btnDiagnostics.setOnClickListener {
-            showDiagnosticsDialog()
-        }
-
-        binding.cardHalWarning.setOnClickListener {
-            showDiagnosticsDialog()
-        }
-
+        // Просмотр последнего записанного видео (справа внизу)
         binding.btnPlayLastVideo.setOnClickListener {
             lastSavedVideoUri?.let { uri ->
                 val intent = Intent(this, VideoPlayerActivity::class.java).apply {
@@ -115,25 +154,50 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             }
         }
 
-        // Mode selector
-        binding.chipGroupMode.setOnCheckedStateChangeListener { _, checkedIds ->
-            selectedMode = if (checkedIds.contains(R.id.chipModeHsr)) {
-                RecordingMode.HSR
-            } else {
-                RecordingMode.HFR
-            }
-            applyConfigUpdate()
+        // Кнопка настроек съёмки (шестерёнка в левом верхнем углу)
+        binding.btnSettings.setOnClickListener {
+            openSettingsBottomSheet()
         }
 
-        // Codec selector
-        binding.chipGroupCodec.setOnCheckedStateChangeListener { _, checkedIds ->
-            selectedFormat = if (checkedIds.contains(R.id.chipCodecWebm)) {
-                OutputFormatType.WEBM_VP9
-            } else {
-                OutputFormatType.MP4_H264
-            }
-            applyConfigUpdate()
+        // Клик по бейджу режима вверху также открывает настройки
+        binding.tvCurrentProfileBadge.setOnClickListener {
+            openSettingsBottomSheet()
         }
+
+        // Смена камеры (справа вверху)
+        binding.btnSwitchCamera.setOnClickListener {
+            if (!isCurrentlyRecording) {
+                cameraHelper.switchCamera()
+            }
+        }
+    }
+
+    private fun openSettingsBottomSheet() {
+        if (isCurrentlyRecording) return
+
+        val sheet = CameraSettingsBottomSheet(
+            currentMode = selectedMode,
+            currentFormat = selectedFormat,
+            currentProfile = selectedProfile,
+            availableProfiles = availableProfiles,
+            onConfigChanged = { mode, format, profile ->
+                selectedMode = mode
+                selectedFormat = format
+                selectedProfile = profile
+                updateCurrentProfileBadge()
+                applyConfigUpdate()
+            },
+            onOpenDiagnostics = {
+                showDiagnosticsDialog()
+            }
+        )
+        sheet.show(supportFragmentManager, CameraSettingsBottomSheet.TAG)
+    }
+
+    private fun updateCurrentProfileBadge() {
+        val modeStr = if (selectedMode == RecordingMode.HSR) "HSR" else "HFR"
+        val profileStr = selectedProfile?.label ?: "720p @ 240fps"
+        binding.tvCurrentProfileBadge.text = "$modeStr • $profileStr"
     }
 
     private fun setupCameraPreview() {
@@ -149,9 +213,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
             cameraHelper.openCamera(surface)
         }
 
-        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-            // Buffer size is configured dynamically per high-speed profile
-        }
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
 
         override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
             cameraHelper.closeCamera()
@@ -164,44 +226,10 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
     override fun onProfilesAvailable(profiles: List<HighSpeedProfile>, isHighSpeedSupported: Boolean) {
         runOnUiThread {
             availableProfiles = profiles
-            updateHalBadge(isHighSpeedSupported)
-            populateProfileChips(profiles)
-        }
-    }
-
-    private fun updateHalBadge(isHighSpeedSupported: Boolean) {
-        if (isHighSpeedSupported) {
-            binding.tvHalStatusBadge.text = getString(R.string.hal_status_supported)
-            binding.tvHalStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_supported))
-            binding.cardHalWarning.visibility = View.GONE
-        } else {
-            binding.tvHalStatusBadge.text = getString(R.string.hal_status_restricted)
-            binding.tvHalStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_restricted))
-            binding.cardHalWarning.visibility = View.VISIBLE
-        }
-    }
-
-    private fun populateProfileChips(profiles: List<HighSpeedProfile>) {
-        binding.chipGroupProfiles.removeAllViews()
-
-        if (profiles.isEmpty()) return
-
-        // Выбираем первый профиль по умолчанию
-        if (selectedProfile == null || !profiles.contains(selectedProfile)) {
-            selectedProfile = profiles.first()
-        }
-
-        for ((index, profile) in profiles.withIndex()) {
-            val chip = Chip(this).apply {
-                text = profile.label
-                isCheckable = true
-                isChecked = profile == selectedProfile || (selectedProfile == null && index == 0)
-                setOnClickListener {
-                    selectedProfile = profile
-                    applyConfigUpdate()
-                }
+            if (selectedProfile == null || !profiles.contains(selectedProfile)) {
+                selectedProfile = profiles.firstOrNull()
             }
-            binding.chipGroupProfiles.addView(chip)
+            updateCurrentProfileBadge()
         }
     }
 
@@ -226,7 +254,7 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
         runOnUiThread {
             when (state) {
                 is CameraState.Initializing -> {
-                    binding.tvStatus.text = getString(R.string.status_initializing)
+                    binding.btnRecord.isEnabled = false
                 }
                 is CameraState.PreviewReady -> {
                     isCurrentlyRecording = false
@@ -234,7 +262,6 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     binding.btnRecord.setImageResource(R.drawable.ic_record_start)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
-                    binding.tvStatus.text = getString(R.string.status_ready)
                     enableControls(true)
                 }
                 is CameraState.Recording -> {
@@ -243,11 +270,9 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     binding.btnRecord.setImageResource(R.drawable.ic_record_stop)
                     binding.recordingHud.visibility = View.VISIBLE
                     binding.tvLiveFps.text = "${selectedProfile?.fps ?: 120} FPS"
-                    binding.tvStatus.text = getString(R.string.status_recording)
                     enableControls(false)
                 }
                 is CameraState.FinalizingRecording -> {
-                    binding.tvStatus.text = getString(R.string.status_saving)
                     binding.btnRecord.isEnabled = false
                 }
                 is CameraState.Saved -> {
@@ -268,37 +293,19 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                     binding.btnRecord.setImageResource(R.drawable.ic_record_start)
                     binding.btnRecord.isEnabled = true
                     binding.recordingHud.visibility = View.GONE
-                    binding.tvStatus.text = "Ошибка"
                     enableControls(true)
-
-                    if (state.isHalRestriction) {
-                        binding.cardHalWarning.visibility = View.VISIBLE
-                        binding.tvWarningMessage.text = state.message
-                    } else {
-                        Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
-                    }
+                    Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
                 }
-                is CameraState.Uninitialized -> {
-                    binding.tvStatus.text = "Камера выключена"
-                }
+                is CameraState.Uninitialized -> {}
             }
         }
     }
 
     private fun enableControls(enable: Boolean) {
+        binding.btnSettings.isEnabled = enable
         binding.btnSwitchCamera.isEnabled = enable
-        binding.chipGroupMode.isEnabled = enable
-        binding.chipGroupProfiles.isEnabled = enable
-        binding.chipGroupCodec.isEnabled = enable
-        for (i in 0 until binding.chipGroupMode.childCount) {
-            binding.chipGroupMode.getChildAt(i).isEnabled = enable
-        }
-        for (i in 0 until binding.chipGroupProfiles.childCount) {
-            binding.chipGroupProfiles.getChildAt(i).isEnabled = enable
-        }
-        for (i in 0 until binding.chipGroupCodec.childCount) {
-            binding.chipGroupCodec.getChildAt(i).isEnabled = enable
-        }
+        binding.btnOpenGallery.isEnabled = enable
+        binding.tvCurrentProfileBadge.isEnabled = enable
     }
 
     private fun startTimer() {
@@ -310,7 +317,6 @@ class MainActivity : AppCompatActivity(), CameraManagerHelper.CameraEventListene
                 delay(1000)
                 recordingSeconds++
                 binding.tvTimer.text = FileUtils.formatDuration(recordingSeconds)
-                // Мигание индикатора записи
                 binding.recDot.visibility = if (binding.recDot.visibility == View.VISIBLE) View.INVISIBLE else View.VISIBLE
             }
         }

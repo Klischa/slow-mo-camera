@@ -2,6 +2,7 @@ package com.klischa.slowmocamera.camera
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
@@ -27,7 +28,7 @@ import com.klischa.slowmocamera.recorder.MediaRecorderHelper
 import java.util.concurrent.Executor
 
 /**
- * Управляет жизненным циклом Camera2, Constrained High Speed сессиями и записью Slow-Mo.
+ * Управляет жизненным циклом Camera2, Constrained High Speed сессиями, зумом и записью Slow-Mo.
  */
 class CameraManagerHelper(
     private val context: Context,
@@ -67,6 +68,15 @@ class CameraManagerHelper(
 
     private var supportedProfiles: List<HighSpeedProfile> = emptyList()
     private var isRecording = false
+
+    // Zoom parameters
+    var currentZoomRatio: Float = 1.0f
+        private set
+    var minZoomRatio: Float = 1.0f
+        private set
+    var maxZoomRatio: Float = 10.0f
+        private set
+    private var sensorActiveArray: Rect? = null
 
     init {
         findDefaultCamera()
@@ -119,6 +129,7 @@ class CameraManagerHelper(
             val currentIndex = cameraIds.indexOf(currentCameraId)
             val nextIndex = (currentIndex + 1) % cameraIds.size
             currentCameraId = cameraIds[nextIndex]
+            currentZoomRatio = 1.0f
 
             closeCamera()
             previewSurfaceTexture?.let { openCamera(it) }
@@ -135,9 +146,13 @@ class CameraManagerHelper(
         listener.onStateChanged(CameraState.Initializing)
 
         try {
+            val characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
             isConstrainedHighSpeedSupported = halChecker.isHighSpeedConstrainedSupported(currentCameraId)
             supportedProfiles = halChecker.getSupportedProfilesForCamera(currentCameraId)
             listener.onProfilesAvailable(supportedProfiles, isConstrainedHighSpeedSupported)
+
+            // Считывание параметров зума
+            setupZoomCapabilities(characteristics)
 
             val selectedProfile = supportedProfiles.firstOrNull() ?: HighSpeedProfile(
                 size = Size(1280, 720),
@@ -163,6 +178,65 @@ class CameraManagerHelper(
                 CameraState.Error("Ошибка открытия камеры: ${e.message}", isHalRestriction = false, exception = e)
             )
         }
+    }
+
+    private fun setupZoomCapabilities(chars: CameraCharacteristics) {
+        sensorActiveArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        var maxZoom = 6.0f
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val zoomRange = chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+            if (zoomRange != null) {
+                minZoomRatio = zoomRange.lower
+                maxZoom = zoomRange.upper
+            }
+        }
+
+        val maxDigital = chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
+        if (maxDigital > 1.0f && maxDigital > maxZoom) {
+            maxZoom = maxDigital
+        }
+
+        maxZoomRatio = maxZoom.coerceAtMost(10.0f)
+        currentZoomRatio = minZoomRatio
+    }
+
+    /**
+     * Изменение коэффициента приближения (Zoom).
+     * @param factor масштабный множитель или новое значение зума
+     * @return итоговый установленный коэффициент зума
+     */
+    fun setZoomRatio(targetRatio: Float): Float {
+        val clamped = targetRatio.coerceIn(minZoomRatio, maxZoomRatio)
+        if (Math.abs(clamped - currentZoomRatio) < 0.01f) return currentZoomRatio
+
+        currentZoomRatio = clamped
+        if (cameraDevice != null && !isRecording) {
+            if (highSpeedSession != null) {
+                startHighSpeedPreview()
+            } else if (standardSession != null) {
+                startStandardPreview()
+            }
+        }
+        return currentZoomRatio
+    }
+
+    private fun applyZoom(builder: CaptureRequest.Builder) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, currentZoomRatio)
+                return
+            } catch (ignored: Exception) {}
+        }
+
+        // Fallback через SCALER_CROP_REGION для совместимости
+        val active = sensorActiveArray ?: return
+        val cropWidth = (active.width() / currentZoomRatio).toInt()
+        val cropHeight = (active.height() / currentZoomRatio).toInt()
+        val cropLeft = (active.width() - cropWidth) / 2
+        val cropTop = (active.height() - cropHeight) / 2
+        val cropRect = Rect(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
+        builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
     }
 
     private val cameraDeviceCallback = object : CameraDevice.StateCallback() {
@@ -355,13 +429,16 @@ class CameraManagerHelper(
                 // Установка целевого диапазона частоты кадров
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
+            // Применение зума
+            applyZoom(builder)
+
             // Внедрение MediaTek Vendor Tags для обхода ограничений
             MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
 
             // Создаем список высокоскоростных запросов (burst)
             val highSpeedRequestList = session.createHighSpeedRequestList(builder.build())
             session.setRepeatingBurst(highSpeedRequestList, null, handler)
-            Log.i(tag, "High-Speed превью запущено с FPS ${config.profile.fps}")
+            Log.i(tag, "High-Speed превью запущено с FPS ${config.profile.fps}, Zoom: ${currentZoomRatio}x")
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска High-Speed превью: ${e.message}", e)
         }
@@ -382,6 +459,9 @@ class CameraManagerHelper(
                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
             }
+            // Применение зума
+            applyZoom(builder)
+
             MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
             session.setRepeatingRequest(builder.build(), null, handler)
         } catch (e: Exception) {
@@ -411,6 +491,7 @@ class CameraManagerHelper(
                     set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
                 }
+                applyZoom(builder)
                 MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
 
                 val requestList = highSpeedSession!!.createHighSpeedRequestList(builder.build())
@@ -422,6 +503,7 @@ class CameraManagerHelper(
                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                     set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 }
+                applyZoom(builder)
                 MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
                 standardSession!!.setRepeatingRequest(builder.build(), null, handler)
             }

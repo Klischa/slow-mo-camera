@@ -17,7 +17,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Top Overlay Bar -->
+    <!-- Top Bar with Gear Icon (Settings), Active Mode Indicator, and Camera Switcher -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -29,6 +29,32 @@
         android:paddingVertical="12dp"
         app:layout_constraintTop_toTopOf="parent">
 
+        <!-- Settings Button (Gear in top-left) -->
+        <ImageButton
+            android:id="@+id/btnSettings"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Настройки съёмки"
+            android:src="@drawable/ic_settings" />
+
+        <!-- Current Profile / Mode Pill -->
+        <TextView
+            android:id="@+id/tvCurrentProfileBadge"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_badge"
+            android:gravity="center"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp"
+            android:text="HFR • 720p @ 240fps"
+            android:textColor="@color/primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <!-- Camera Switcher -->
         <ImageButton
             android:id="@+id/btnSwitchCamera"
             android:layout_width="44dp"
@@ -36,33 +62,28 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/action_switch_camera"
             android:src="@drawable/ic_camera_switch" />
-
-        <!-- HAL Badge -->
-        <TextView
-            android:id="@+id/tvHalStatusBadge"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="8dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_badge"
-            android:gravity="center"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="6dp"
-            android:text="@string/hal_status_supported"
-            android:textColor="@color/status_supported"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <ImageButton
-            android:id="@+id/btnDiagnostics"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/action_diagnostics"
-            android:src="@drawable/ic_info" />
     </LinearLayout>
 
-    <!-- Recording Indicator & Timer -->
+    <!-- Zoom Indicator Badge (Shows on pinch zoom) -->
+    <TextView
+        android:id="@+id/tvZoomBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/bg_badge"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:text="1.0x"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:visibility="visible" />
+
+    <!-- Recording Indicator & Timer HUD -->
     <LinearLayout
         android:id="@+id/recordingHud"
         android:layout_width="wrap_content"
@@ -107,184 +128,59 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Warning / HAL Restriction Banner -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/cardHalWarning"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginTop="8dp"
-        android:visibility="gone"
-        app:cardBackgroundColor="#D93E2723"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp"
-        app:layout_constraintTop_toBottomOf="@id/recordingHud"
-        tools:visibility="visible">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:id="@+id/tvWarningTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="⚠️ Ограничение вендора (HAL)"
-                android:textColor="@color/accent_yellow"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvWarningMessage"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="На прошивках MediaTek/Infinix высокоскоростной режим может блокироваться для сторонних приложений. Нажмите для подробностей."
-                android:textColor="@color/text_primary"
-                android:textSize="12sp" />
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
-    <!-- Bottom Control Panel -->
-    <LinearLayout
+    <!-- Clean Bottom Action Bar -->
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/bottomPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/bg_control_panel"
-        android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="24dp"
+        android:paddingHorizontal="24dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="28dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Mode Selector: HFR (30fps file) vs HSR (High FPS file) -->
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:overScrollMode="never"
-            android:scrollbars="none">
+        <!-- Gallery / Video Player Button (Left) -->
+        <ImageButton
+            android:id="@+id/btnOpenGallery"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_badge"
+            android:contentDescription="Открыть плеер / Галерею"
+            android:padding="14dp"
+            android:src="@drawable/ic_gallery"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/chipGroupMode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:singleSelection="true">
+        <!-- Big Shutter / Record Button (Center) -->
+        <ImageButton
+            android:id="@+id/btnRecord"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Запись Slow-Mo"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_record_start"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipModeHfr"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="true"
-                    android:text="HFR Slow-Mo (30fps)"
-                    android:textColor="@color/text_primary" />
+        <!-- Status / Quick Play Last Video (Right) -->
+        <ImageButton
+            android:id="@+id/btnPlayLastVideo"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_badge"
+            android:contentDescription="Смотреть последнее видео"
+            android:padding="14dp"
+            android:src="@drawable/ic_play"
+            android:visibility="invisible"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:visibility="visible" />
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipModeHsr"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="HSR High-FPS (240fps)"
-                    android:textColor="@color/text_primary" />
-            </com.google.android.material.chip.ChipGroup>
-        </HorizontalScrollView>
-
-        <!-- Resolution & FPS Selection Chips -->
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:overScrollMode="never"
-            android:scrollbars="none">
-
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/chipGroupProfiles"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:singleSelection="true">
-                <!-- Dynamically populated from CameraCharacteristics HighSpeedVideoSizes and FPS ranges -->
-            </com.google.android.material.chip.ChipGroup>
-        </HorizontalScrollView>
-
-        <!-- Codec / Container selector (MP4/H.264 vs WebM/VP9) -->
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:overScrollMode="never"
-            android:scrollbars="none">
-
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/chipGroupCodec"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:singleSelection="true">
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipCodecMp4"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="true"
-                    android:text="MP4 (H.264)"
-                    android:textColor="@color/text_primary" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipCodecWebm"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="WebM (VP9)"
-                    android:textColor="@color/text_primary" />
-            </com.google.android.material.chip.ChipGroup>
-        </HorizontalScrollView>
-
-        <!-- Record Button and Quick Actions -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp">
-
-            <ImageButton
-                android:id="@+id/btnPlayLastVideo"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_badge"
-                android:contentDescription="@string/btn_play_last_video"
-                android:padding="12dp"
-                android:src="@drawable/ic_play"
-                android:visibility="gone"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toTopOf="parent"
-                tools:visibility="visible" />
-
-            <ImageButton
-                android:id="@+id/btnRecord"
-                android:layout_width="76dp"
-                android:layout_height="76dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Record"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_record_start"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toTopOf="parent" />
-
-            <TextView
-                android:id="@+id/tvStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/status_ready"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toTopOf="parent" />
-        </androidx.constraintlayout.widget.ConstraintLayout>
-    </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

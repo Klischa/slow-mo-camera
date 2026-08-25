@@ -16,12 +16,13 @@
 
     <!-- Top Toolbar overlay -->
     <LinearLayout
+        android:id="@+id/playerToolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#99000000"
+        android:background="#B3000000"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="12dp"
+        android:padding="8dp"
         app:layout_constraintTop_toTopOf="parent">
 
         <Button
@@ -45,13 +46,24 @@
             android:textSize="14sp"
             android:textStyle="bold" />
 
+        <!-- Open from phone gallery button -->
         <Button
-            android:id="@+id/btnSpeed"
+            android:id="@+id/btnPickGallery"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Скорость: 1.0x"
+            android:layout_marginEnd="8dp"
+            android:text="📂 Из галереи"
             android:textColor="@color/primary" />
+
+        <!-- Speed control button -->
+        <Button
+            android:id="@+id/btnSpeed"
+            style="@style/Widget.Material3.Button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="1.0x"
+            android:textColor="@color/on_primary" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
