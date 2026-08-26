@@ -17,7 +17,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Гироскопический стабилизатор видео (Gyroflow-совместимый алгоритм).
+ * Гироскопический стабилизатор видео (Gyroflow IMU Smoothing).
  * Компенсирует физическое вращение камеры на основе данных аппаратного гироскопа.
  */
 class GyroflowStabilizer(private val context: Context) {
@@ -33,7 +33,7 @@ class GyroflowStabilizer(private val context: Context) {
         val frameExtractor = FrameExtractor(context)
         val videoInfo = frameExtractor.getVideoInfo(videoUri)
         val durationMs = videoInfo.durationMs
-        val baseFps = videoInfo.estimatedFps.toInt().coerceAtLeast(30)
+        val baseFps = videoInfo.estimatedFps.toInt().coerceIn(15, 240)
         val stepMs = (1000f / baseFps).toLong().coerceAtLeast(16L)
 
         onProgress(15)
@@ -46,7 +46,7 @@ class GyroflowStabilizer(private val context: Context) {
             maxResolutionHeight = 720
         )
 
-        if (frames.size < 2) return@withContext null
+        if (frames.size < 3) return@withContext null
 
         onProgress(40)
 
@@ -65,21 +65,23 @@ class GyroflowStabilizer(private val context: Context) {
         onProgress(60)
 
         val stabilizedFrames = mutableListOf<Bitmap>()
-        val scaleFactor = 1.0f / params.cropPercentage.coerceIn(0.7f, 1.0f)
+        val cropFactor = params.cropPercentage.coerceIn(0.85f, 0.96f)
+        val scaleFactor = 1.0f / cropFactor
 
         for ((i, frame) in frames.withIndex()) {
-            val angle = if (i < gyroAngles.size) -gyroAngles[i] * 0.1f else 0f
+            val angle = if (i < gyroAngles.size) (-gyroAngles[i] * 0.05f).coerceIn(-4f, 4f) else 0f
             val output = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(output)
             val matrix = Matrix().apply {
                 postRotate(angle, frame.width / 2f, frame.height / 2f)
                 postScale(scaleFactor, scaleFactor, frame.width / 2f, frame.height / 2f)
             }
-            canvas.drawBitmap(frame, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            canvas.drawBitmap(frame, matrix, paint)
             stabilizedFrames.add(output)
         }
 
-        onProgress(80)
+        onProgress(85)
 
         val assembler = VideoAssembler(context)
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())

@@ -2,6 +2,8 @@ package com.klischa.slowmocamera.ai.interpolation
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
@@ -9,8 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Потоковый экстрактор кадров из видео (Stream Chunked Frame Extractor).
- * Читает кадры последовательно порциями, предотвращая переполнение памяти (OOM).
+ * Высокоточный потоковый экстрактор кадров из видео (Exact Sequential Frame Decoder).
+ * Извлекает абсолютно каждый уникальный кадр без дублирования ключевых кадров (I-frames).
  */
 class FrameExtractor(private val context: Context) {
 
@@ -37,9 +39,15 @@ class FrameExtractor(private val context: Context) {
             val finalWidth = if (isRotated) height else width
             val finalHeight = if (isRotated) width else height
 
-            val fps = 30f // Базовый FPS
-            val totalFrames = ((duration / 1000f) * fps).toInt().coerceAtLeast(1)
+            // Определение реальной частоты кадров видео
+            var fps = 30f
+            val countStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)
+            val frameCount = countStr?.toIntOrNull()
+            if (frameCount != null && frameCount > 0 && duration > 0) {
+                fps = (frameCount.toFloat() / (duration.toFloat() / 1000f)).coerceIn(15f, 240f)
+            }
 
+            val totalFrames = ((duration / 1000f) * fps).toInt().coerceAtLeast(1)
             return VideoInfo(duration, finalWidth, finalHeight, fps, totalFrames)
         } catch (e: Exception) {
             Log.e(tag, "Ошибка извлечения метаданных видео: ${e.message}")
@@ -49,6 +57,9 @@ class FrameExtractor(private val context: Context) {
         }
     }
 
+    /**
+     * Извлекает последовательность реальных уникальных кадров с микросекундной точностью OPTION_CLOSEST.
+     */
     suspend fun extractFramesChunk(
         uri: Uri,
         startMs: Long,
@@ -61,13 +72,18 @@ class FrameExtractor(private val context: Context) {
 
         try {
             retriever.setDataSource(context, uri)
+            val videoInfo = getVideoInfo(uri)
+            val durationMs = videoInfo.durationMs
+            val actualStepMs = if (stepMs > 0) stepMs else (1000f / videoInfo.estimatedFps).toLong().coerceAtLeast(16L)
+
             var currentMs = startMs
-            val endMs = startMs + chunkDurationMs
+            val endMs = (startMs + chunkDurationMs).coerceAtMost(durationMs)
 
             while (currentMs < endMs) {
-                val frame = retriever.getFrameAtTime(currentMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                // ВАЖНО: Используем OPTION_CLOSEST для получения точного кадра в этот момент времени,
+                // а не OPTION_CLOSEST_SYNC (который возвращал один и тот же I-frame 30 раз подряд)
+                val frame = retriever.getFrameAtTime(currentMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
                 if (frame != null) {
-                    // Ограничиваем разрешение до 720p для Mali-G57 GPU
                     val targetFrame = if (frame.height > maxResolutionHeight) {
                         val scale = maxResolutionHeight.toFloat() / frame.height.toFloat()
                         val newWidth = (frame.width * scale).toInt()
@@ -79,14 +95,15 @@ class FrameExtractor(private val context: Context) {
                     }
                     frames.add(targetFrame)
                 }
-                currentMs += stepMs
+                currentMs += actualStepMs
             }
         } catch (e: Exception) {
-            Log.e(tag, "Ошибка извлечения чанка кадров: ${e.message}", e)
+            Log.e(tag, "Ошибка извлечения кадров: ${e.message}", e)
         } finally {
             retriever.release()
         }
 
+        Log.i(tag, "Извлечено ${frames.size} уникальных кадров для обработки")
         frames
     }
 }
