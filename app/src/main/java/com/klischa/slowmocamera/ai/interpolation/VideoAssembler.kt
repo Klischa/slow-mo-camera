@@ -20,8 +20,8 @@ import java.io.File
 
 /**
  * Ассемблер видеопотока (Video Assembler).
- * Кодирует последовательность интерполированных Bitmap в аппаратный MP4/H.264
- * с точным таймингом presentation timestamp (PTS) для 60/120/240 FPS.
+ * Кодирует последовательность интерполированных/стабилизированных Bitmap в MP4/H.264
+ * со строгим монотонным presentation timestamp (PTS), гарантируя точную длительность видео.
  */
 class VideoAssembler(private val context: Context) {
 
@@ -34,6 +34,7 @@ class VideoAssembler(private val context: Context) {
     ): Uri? = withContext(Dispatchers.IO) {
         if (frames.isEmpty()) return@withContext null
 
+        val safeFps = targetFps.coerceIn(15, 240)
         val firstFrame = frames.first()
         val width = firstFrame.width
         val height = firstFrame.height
@@ -48,8 +49,8 @@ class VideoAssembler(private val context: Context) {
         try {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, 25_000_000) // 25 Mbps
-                setInteger(MediaFormat.KEY_FRAME_RATE, targetFps)
+                setInteger(MediaFormat.KEY_BIT_RATE, 20_000_000) // 20 Mbps
+                setInteger(MediaFormat.KEY_FRAME_RATE, safeFps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
@@ -63,10 +64,11 @@ class VideoAssembler(private val context: Context) {
             var muxerStarted = false
 
             val bufferInfo = MediaCodec.BufferInfo()
-            val frameDurationUs = 1_000_000L / targetFps
+            val frameDurationUs = 1_000_000L / safeFps
+            var writtenFramesCount = 0L
 
-            for ((i, frame) in frames.withIndex()) {
-                // Отрисовываем кадр на входной Surface энкодера
+            for (frame in frames) {
+                // 1. Отрисовываем кадр на входной Surface энкодера
                 val canvas: Canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     inputSurface.lockHardwareCanvas()
                 } else {
@@ -75,7 +77,7 @@ class VideoAssembler(private val context: Context) {
                 canvas.drawBitmap(frame, 0f, 0f, null)
                 inputSurface.unlockCanvasAndPost(canvas)
 
-                // Считываем закодированные буферы
+                // 2. Считываем закодированные буферы со строгим таймстемпом
                 var outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 10_000)
                 while (outputIndex >= 0) {
                     val encodedBuffer = encoder.getOutputBuffer(outputIndex)
@@ -84,13 +86,15 @@ class VideoAssembler(private val context: Context) {
                             bufferInfo.size = 0
                         }
 
-                        if (bufferInfo.size != 0) {
+                        if (bufferInfo.size > 0) {
                             if (!muxerStarted) {
                                 trackIndex = muxer.addTrack(encoder.outputFormat)
                                 muxer.start()
                                 muxerStarted = true
                             }
-                            bufferInfo.presentationTimeUs = i * frameDurationUs
+                            // Строгий монотонный PTS
+                            bufferInfo.presentationTimeUs = writtenFramesCount * frameDurationUs
+                            writtenFramesCount++
                             muxer.writeSampleData(trackIndex, encodedBuffer, bufferInfo)
                         }
                     }
@@ -99,18 +103,21 @@ class VideoAssembler(private val context: Context) {
                 }
             }
 
-            // Завершение кодирования (EOS)
+            // 3. Завершение кодирования (EOS)
             encoder.signalEndOfInputStream()
 
-            var outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 20_000)
+            // 4. Дренаж оставшихся буферов с корректным таймингом
+            var outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 25_000)
             while (outputIndex >= 0) {
                 val encodedBuffer = encoder.getOutputBuffer(outputIndex)
                 if (encodedBuffer != null && bufferInfo.size > 0 && muxerStarted) {
+                    bufferInfo.presentationTimeUs = writtenFramesCount * frameDurationUs
+                    writtenFramesCount++
                     muxer.writeSampleData(trackIndex, encodedBuffer, bufferInfo)
                 }
                 encoder.releaseOutputBuffer(outputIndex, false)
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
-                outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 20_000)
+                outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 25_000)
             }
 
             encoder.stop()
@@ -122,6 +129,9 @@ class VideoAssembler(private val context: Context) {
             }
             muxer.release()
             muxer = null
+
+            val totalDurationSec = (writtenFramesCount * frameDurationUs) / 1_000_000f
+            Log.i(tag, "Видео успешно собрано: $writtenFramesCount кадров, длительность: ${String.format(java.util.Locale.US, "%.2fs", totalDurationSec)}")
 
             return@withContext saveToMediaStore(tempFile, outputFileName)
         } catch (e: Exception) {
@@ -141,7 +151,7 @@ class VideoAssembler(private val context: Context) {
         val contentValues = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/SlowMoCamera_AI_Interpolated")
+            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/SlowMoCamera_Stabilized")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
