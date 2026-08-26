@@ -43,7 +43,7 @@ import java.util.concurrent.Executor
 
 /**
  * Управляет Camera2: High-Speed Slow-Mo, ручными PRO-настройками (ISO, Shutter, WB, Focus),
- * снимками во время записи (Snapshot), таймлапсом, детекцией движения и ориентацией.
+ * аппаратной и программной стабилизацией, снимками во время записи и ориентацией.
  */
 class CameraManagerHelper(
     private val context: Context,
@@ -67,7 +67,7 @@ class CameraManagerHelper(
     val stabilizationManager = StabilizationManager(context)
     lateinit var motionDetector: MotionDetector
     private var stabCapabilities = CameraStabilizer.StabilizationCapability(false, false, false)
-    private var currentGyroFile: java.io.File? = null
+    private var currentGyroFile: File? = null
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -80,7 +80,6 @@ class CameraManagerHelper(
     private var previewSurface: Surface? = null
     private var recorderSurface: Surface? = null
     private var imageReader: ImageReader? = null
-    private var motionAnalysisReader: ImageReader? = null
 
     var currentCameraId: String = "0"
         private set
@@ -314,9 +313,6 @@ class CameraManagerHelper(
         builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
     }
 
-    /**
-     * Тап по экрану для точечной фокусировки и экспозамера (Tap-to-Focus).
-     */
     fun tapToFocus(x: Float, y: Float, viewWidth: Int, viewHeight: Int) {
         val meteringRect = CameraManualControls.calculateFocusArea(
             PointF(x, y),
@@ -383,8 +379,6 @@ class CameraManagerHelper(
             standardSession = null
             imageReader?.close()
             imageReader = null
-            motionAnalysisReader?.close()
-            motionAnalysisReader = null
 
             val profileSize = config.profile.size
             currentPreviewSize = profileSize
@@ -465,12 +459,12 @@ class CameraManagerHelper(
         val newRecorderSurface = mediaRecorderHelper.setupRecorder(config)
         recorderSurface = newRecorderSurface
 
-        val surfaces = mutableListOf(preview, newRecorderSurface)
-        imageReader?.surface?.let { surfaces.add(it) }
-
+        // Для High-Speed сессии разрешено строго 2 поверхности (Preview и Recorder)
         if (!isFrontCamera && isConstrainedHighSpeedSupported && config.profile.isConstrainedSupported) {
+            val surfaces = listOf(preview, newRecorderSurface)
             createConstrainedSession(device, surfaces, handler)
         } else {
+            val surfaces = listOfNotNull(preview, newRecorderSurface, imageReader?.surface)
             createStandardSession(device, surfaces, handler)
         }
     }
@@ -569,6 +563,16 @@ class CameraManagerHelper(
         }
     }
 
+    private fun getValidStandardFpsRange(): Range<Int> {
+        return try {
+            val chars = cameraManager.getCameraCharacteristics(currentCameraId)
+            val available = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            available?.maxByOrNull { it.upper } ?: Range(30, 30)
+        } catch (e: Exception) {
+            Range(30, 30)
+        }
+    }
+
     private fun startHighSpeedPreview() {
         val session = highSpeedSession ?: return
         val device = cameraDevice ?: return
@@ -606,7 +610,8 @@ class CameraManagerHelper(
                 addTarget(surface)
                 manualControls.applyToBuilder(this)
                 stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
-                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
+                // Для стандартной сессии используем валидный поддерживаемый диапазон FPS
+                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, getValidStandardFpsRange())
             }
             applyZoom(builder)
             MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
@@ -616,9 +621,6 @@ class CameraManagerHelper(
         }
     }
 
-    /**
-     * Снимок фото во время видеозаписи (Snapshot).
-     */
     fun takeSnapshotDuringRecording(deviceRotationDegrees: Int) {
         val session = standardSession ?: highSpeedSession ?: return
         val device = cameraDevice ?: return
@@ -646,9 +648,6 @@ class CameraManagerHelper(
         }
     }
 
-    /**
-     * Спуск затвора для создания фотоснимка в фоторежиме.
-     */
     fun takePhoto(deviceRotationDegrees: Int) {
         val session = standardSession ?: return
         val device = cameraDevice ?: return
@@ -689,14 +688,20 @@ class CameraManagerHelper(
         val handler = backgroundHandler ?: return
 
         try {
+            // 1. Запуск MediaRecorder
             mediaRecorderHelper.start()
             isRecording = true
 
-            // Запись телеметрии гироскопа (Gyroflow)
+            // 2. Запись телеметрии гироскопа (Gyroflow)
             val gyroFile = File(context.cacheDir, "temp_telemetry.gyro.csv")
             currentGyroFile = gyroFile
-            stabilizationManager.sensorRecorder.startRecording()
+            try {
+                stabilizationManager.sensorRecorder.startRecording()
+            } catch (e: Exception) {
+                Log.w(tag, "Не удалось запустить SensorRecorder: ${e.message}")
+            }
 
+            // 3. Отправка повторяющихся запросов записи в активную сессию
             if (highSpeedSession != null) {
                 val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(preview)
@@ -716,7 +721,7 @@ class CameraManagerHelper(
                     addTarget(recorder)
                     manualControls.applyToBuilder(this)
                     stabilizationManager.applyHardwareStabilization(this, stabCapabilities, stabilizationManager.currentParams.isHardwarePreviewStabilizationEnabled)
-                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, config.profile.fpsRange)
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, getValidStandardFpsRange())
                 }
                 applyZoom(builder)
                 MtkVendorTagHelper.applyMtkSlowMoVendorTags(builder, config.profile.fps)
@@ -728,9 +733,16 @@ class CameraManagerHelper(
         } catch (e: Exception) {
             Log.e(tag, "Ошибка запуска записи: ${e.message}", e)
             isRecording = false
+            try {
+                mediaRecorderHelper.stop()
+            } catch (ignored: Exception) {}
+
             listener.onStateChanged(
                 CameraState.Error("Ошибка старта записи: ${e.message}", isHalRestriction = false, exception = e)
             )
+
+            // Пересоздаем сессию в случае ошибки для возврата в рабочее состояние
+            startSession()
         }
     }
 
@@ -743,13 +755,9 @@ class CameraManagerHelper(
             isRecording = false
 
             currentGyroFile?.let {
-                stabilizationManager.sensorRecorder.stopRecording(it)
-            }
-
-            if (highSpeedSession != null) {
-                startHighSpeedPreview()
-            } else if (standardSession != null) {
-                startStandardPreview()
+                try {
+                    stabilizationManager.sensorRecorder.stopRecording(it)
+                } catch (ignored: Exception) {}
             }
 
             if (savedUri != null) {
@@ -760,6 +768,7 @@ class CameraManagerHelper(
                 )
             }
 
+            // Пересоздаем сессию с новым подготовленным MediaRecorder для следующей записи
             startSession()
         } catch (e: Exception) {
             Log.e(tag, "Ошибка остановки записи: ${e.message}", e)
@@ -767,6 +776,7 @@ class CameraManagerHelper(
             listener.onStateChanged(
                 CameraState.Error("Ошибка при остановке записи: ${e.message}", isHalRestriction = false, exception = e)
             )
+            startSession()
         }
     }
 
